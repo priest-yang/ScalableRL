@@ -1,0 +1,247 @@
+{    
+    "output_dir": null,
+    "job_name": "default",
+    "resume": false,
+    "seed": 1000,
+    "num_workers": 4,
+    "batch_size": 256,
+    "steps": 100000,
+    "log_freq": 1,
+    "save_checkpoint": true,
+    "save_freq": 2000,
+    "wandb": {
+        "enable": false,
+        "project": "franka_sim",
+        "disable_artifact": true
+    },
+    "policy": {
+        "type": "sac",
+        "n_obs_steps": 1,
+        "repo_id": "hf_username/policy_name",
+        "normalization_mapping": {
+            "VISUAL": "MEAN_STD",
+            "STATE": "MIN_MAX",
+            "ENV": "MIN_MAX",
+            "ACTION": "MIN_MAX"
+        },
+        "input_features": {
+            "observation.images.front": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    224,
+                    224
+                ]
+            },
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    224,
+                    224
+                ]
+            }, 
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    6
+                ]
+            },
+            "observation.environment_state": {
+                "type": "STATE",
+                "shape": [
+                    6
+                ]
+            }
+        },
+        "output_features": {
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    6
+                ]
+            }
+        },
+        "device": "cuda",
+        "use_amp": false,
+        "dataset_stats": {
+            "observation.images.global_camera": {
+                "mean": [
+                    0.485,
+                    0.456,
+                    0.406
+                ],
+                "std": [
+                    0.229,
+                    0.224,
+                    0.225
+                ]
+            },
+            "observation.images.hand_camera": {
+                "mean": [
+                    0.485,
+                    0.456,
+                    0.406
+                ],
+                "std": [
+                    0.229,
+                    0.224,
+                    0.225
+                ]
+            },
+            "observation.state": {
+                "min": [
+                    -0.6897139549255371,
+                    -1.1421763896942139,
+                    -0.5745007991790771,
+                    -2.97829008102417,
+                    -0.2710767090320587,
+                    1.3246592283248901
+                ],
+                "max": [
+                    0.5107022523880005,
+                    0.5516204237937927,
+                    0.5620884299278259,
+                    -1.3330878019332886,
+                    0.32758936285972595,
+                    3.119610548019409
+                ]
+            },
+            "observation.environment_state": {
+                "min": [
+                    -0.6897139549255371,
+                    -1.1421763896942139,
+                    -0.5745007991790771,
+                    -2.97829008102417,
+                    -0.2710767090320587,
+                    1.3246592283248901
+                ],
+                "max": [
+                    0.5107022523880005,
+                    0.5516204237937927,
+                    0.5620884299278259,
+                    -1.3330878019332886,
+                    0.32758936285972595,
+                    3.119610548019409
+                ]
+            }
+        },
+        "storage_device": "cpu",
+        "vision_encoder_name": "helper2424/resnet10",
+        "freeze_vision_encoder": true,
+        "image_encoder_hidden_dim": 32,
+        "shared_encoder": true,
+        "online_steps": 1000000,
+        "online_env_seed": 10000,
+        "online_buffer_capacity": 100000,
+        "offline_buffer_capacity": 100000,
+        "online_step_before_learning": 100,
+        "policy_update_freq": 1,
+        "discount": 0.97,
+        "temperature_init": 0.01,
+        "num_critics": 2,
+        "num_subsample_critics": null,
+        "critic_lr": 0.0003,
+        "actor_lr": 0.0003,
+        "temperature_lr": 0.0003,
+        "critic_target_update_weight": 0.005,
+        "utd_ratio": 2,
+        "state_encoder_hidden_dim": 256,
+        "latent_dim": 64,
+        "target_entropy": null,
+        "use_backup_entropy": true,
+        "grad_clip_norm": 10.0,
+        "num_discrete_actions": null,
+        "critic_network_kwargs": {
+            "hidden_dims": [
+                256,
+                256
+            ],
+            "activate_final": true,
+            "final_activation": null
+        },
+        "actor_network_kwargs": {
+            "hidden_dims": [
+                256,
+                256
+            ],
+            "activate_final": true
+        },
+        "policy_kwargs": {
+            "use_tanh_squash": true,
+            "std_min": 1e-5,
+            "std_max": 5,
+            "init_final": 0.05
+        },
+        "actor_learner_config": {
+            "learner_host": "127.0.0.1",
+            "learner_port": 50051,
+            "policy_parameters_push_frequency": 60
+        },
+        "concurrency": {
+            "actor": "threads",
+            "learner": "threads"
+        }
+    },
+    "env": {
+    "type": "lwlab",
+    "wrapper": {
+        "ENV_STATE_KEYS": ["joint_pos"],
+        "OBS_STATE_KEYS": ["joint_pos"],
+        "gripper_penalty": -0.02,
+        "display_cameras": false,
+        "add_joint_velocity_to_observation": false,
+        "add_ee_pose_to_observation": false,
+        "reset_time_s": 2.0,
+        "control_mode": "gamepad"
+    },
+    "name": "franka_sim",
+    "mode": null,
+    "repo_id": "aractingi/franka_sim_pick_lift_6",
+    "dataset_root": null,
+    "task": "PandaPickCubeKeyboard-v0",
+    "num_episodes": 30,
+    "episode": 0,
+    "pretrained_policy_name_or_path": null,
+    "device": "cuda",
+    "push_to_hub": true,
+    "fps": 10,
+    "features": {
+        "observation.images.global_camera": {
+            "type": "VISUAL",
+            "shape": [
+                3,
+                224,
+                224
+            ]
+        },
+        "observation.images.hand_camera": {
+            "type": "VISUAL",
+            "shape": [
+                3,
+                224,
+                224
+            ]
+        },
+        "observation.state": {
+            "type": "STATE",
+            "shape": [
+                6
+            ]
+        },
+        "action": {
+            "type": "ACTION",
+            "shape": [
+                6
+            ]
+        }
+    },
+    "features_map": {
+        "observation.images.global_camera": "observation.images.global_camera",
+        "observation.images.hand_camera": "observation.images.hand_camera",
+        "observation.state": "observation.state",
+        "action": "action"
+    },
+    "reward_classifier_pretrained_path": null
+}
+}

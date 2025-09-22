@@ -1866,6 +1866,27 @@ def make_robot_env(cfg: EnvConfig) -> gym.Env:
         env = BatchCompatibleWrapper(env=env)
         env = TorchActionWrapper(env=env, device=cfg.device)
         return env
+    elif cfg.type == "lwlab":
+        from lwlab.distributed.proxy import RemoteEnv
+        from lerobot.scripts.lwrl.sim.lwlab.lwlab_env_wrapper import (
+            LwLabTorchActionWrapper,
+            LwLabObservationProcessorWrapper,
+            LwlabSparseRewardWrapper,
+        )
+
+        env = RemoteEnv.make(address=('0.0.0.0', 50000), authkey=b'lightwheel')
+        env = env.unwrapped
+        env.reset()
+        
+        env = LwLabObservationProcessorWrapper(env=env, 
+            ENV_STATE_KEYS=cfg.wrapper.ENV_STATE_KEYS, # privileged keys
+            OBS_STATE_KEYS=cfg.wrapper.OBS_STATE_KEYS, # observation keys,
+            features=cfg.features
+        )
+        env = LwLabTorchActionWrapper(env=env, device=env.device)
+        env = LwlabSparseRewardWrapper(env=env) # TODO: Check if this is correct
+        return env
+
 
     if not hasattr(cfg, "robot") or not hasattr(cfg, "teleop"):
         raise ValueError(

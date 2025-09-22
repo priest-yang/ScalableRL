@@ -286,6 +286,7 @@ def act_with_policy(
             action = online_env.action_space.sample()
 
         next_obs, reward, done, truncated, info = online_env.step(action)
+        print(f"\n\nTotal_steps:{episode_total_steps}, done:{done}, truncated:{truncated}\n\n")
 
         sum_reward_episode += float(reward)
         # Increment total steps counter for intervention rate

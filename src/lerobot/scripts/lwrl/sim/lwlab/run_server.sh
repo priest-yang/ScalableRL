@@ -16,4 +16,4 @@ fi
 export LW_API_ENDPOINT="https://api-dev.lightwheel.net"
 python ./env_serve.py \
     --task_config="$task_config" \
-    # --headless \
+    --headless \
