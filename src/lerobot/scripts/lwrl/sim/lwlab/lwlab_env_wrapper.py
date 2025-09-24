@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import einops
 
 class LwLabObservationProcessorWrapper(gym.ObservationWrapper):
-    def __init__(self, env: gym.Env, ENV_STATE_KEYS=None, OBS_STATE_KEYS=None, features=None):
+    def __init__(self, env: gym.Env, ENV_STATE_KEYS=None, OBS_STATE_KEYS=None, CAMERA_KEYS=None, features=None):
         super().__init__(env)
         prev_space = self.observation_space
         new_space = {}
@@ -23,6 +23,8 @@ class LwLabObservationProcessorWrapper(gym.ObservationWrapper):
         # observation_state
         self.OBS_STATE_KEYS = OBS_STATE_KEYS if OBS_STATE_KEYS is not None else ["joint_pos"]
         self.OBS_STATE_SHAPE = [num_envs, 0]
+        # camera_keys
+        self.CAMERA_KEYS = CAMERA_KEYS
         
         for key in policy_observation_space:
             if "camera" in key:
@@ -62,9 +64,14 @@ class LwLabObservationProcessorWrapper(gym.ObservationWrapper):
         # map to expected inputs for the policy
         return_observations = {}
 
-        imgs = {
-            f"observation.images.{key}": img for key, img in observations["policy"].items() if "camera" in key
-        }
+        if self.CAMERA_KEYS is not None:
+            imgs = {
+                f"observation.images.{key}": img for key, img in observations["policy"].items() if key in self.CAMERA_KEYS
+            }
+        else:
+            imgs = {
+                f"observation.images.{key}": img for key, img in observations["policy"].items() if "camera" in key
+            }
 
         for imgkey, img in imgs.items():
             # TODO(aliberts, rcadene): use transforms.ToTensor()?
@@ -259,7 +266,8 @@ class LwlabSparseRewardWrapper(gym.Wrapper):
         """
         Override the Reward function to 0-1 sparse reward
         """
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        reward = torch.where(terminated, 1.0, 0.0)
-        truncated = truncated or terminated
-        return obs, reward, terminated, truncated, info
+        obs, reward, done, truncated, info = self.env.step(action)
+        reward = info['log']['Episode_Termination/success']
+        truncated = truncated or done
+
+        return obs, reward, done, truncated, info

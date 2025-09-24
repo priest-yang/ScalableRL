@@ -316,6 +316,7 @@ class LwlabEnvTransformConfig(EnvTransformConfig):
     """Configuration for the LwLab environment."""
     ENV_STATE_KEYS: list[str] | None = None # privileged keys
     OBS_STATE_KEYS: list[str] | None = None # observation keys
+    CAMERA_KEYS: list[str] | None = None # camera keys
 
 
 @EnvConfig.register_subclass("lwlab")

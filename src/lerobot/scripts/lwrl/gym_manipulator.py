@@ -1881,6 +1881,7 @@ def make_robot_env(cfg: EnvConfig) -> gym.Env:
         env = LwLabObservationProcessorWrapper(env=env, 
             ENV_STATE_KEYS=cfg.wrapper.ENV_STATE_KEYS, # privileged keys
             OBS_STATE_KEYS=cfg.wrapper.OBS_STATE_KEYS, # observation keys,
+            CAMERA_KEYS=cfg.wrapper.CAMERA_KEYS, # camera keys
             features=cfg.features
         )
         env = LwLabTorchActionWrapper(env=env, device=env.device)
