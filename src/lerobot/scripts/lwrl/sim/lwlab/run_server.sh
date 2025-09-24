@@ -1,5 +1,5 @@
 #!/bin/bash
-task_config=lerobot_liftobj_visual
+task_config=lerobot_liftobj_visual_hilserl
 env_gpu=0
 policy_gpu=0
 
@@ -14,6 +14,11 @@ else
 fi
 
 export LW_API_ENDPOINT="https://api-dev.lightwheel.net"
-python ./env_serve.py \
+
+# automatically get lwlab path
+LWLAB_PATH=$(python -c "import lwlab; print(lwlab.__path__[0])")
+cd "$LWLAB_PATH"
+
+python scripts/env_server.py \
     --task_config="$task_config" \
     --headless \
