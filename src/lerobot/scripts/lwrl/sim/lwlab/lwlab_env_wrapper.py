@@ -266,8 +266,8 @@ class LwlabSparseRewardWrapper(gym.Wrapper):
         """
         Override the Reward function to 0-1 sparse reward
         """
-        obs, reward, done, truncated, info = self.env.step(action)
-        reward = info['log']['Episode_Termination/success']
-        truncated = truncated or done
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        reward = torch.where(info['is_success'], 1.0, 0.0)
+        truncated = torch.logical_or(truncated, terminated)
 
-        return obs, reward, done, truncated, info
+        return obs, reward, terminated, truncated, info

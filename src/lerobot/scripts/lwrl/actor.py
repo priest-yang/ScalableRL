@@ -88,7 +88,7 @@ from lerobot.utils.utils import (
     get_safe_torch_device,
     init_logging,
 )
-
+from collections import deque
 ACTOR_SHUTDOWN_TIMEOUT = 30
 
 
@@ -178,6 +178,7 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
         parameters_queue=parameters_queue,
         transitions_queue=transitions_queue,
         interactions_queue=interactions_queue,
+        policy_parameters_push_frequency=cfg.policy.actor_learner_config.policy_parameters_push_frequency,
     )
     logging.info("[ACTOR] Policy process joined")
 
@@ -212,6 +213,7 @@ def act_with_policy(
     parameters_queue: Queue,
     transitions_queue: Queue,
     interactions_queue: Queue,
+    policy_parameters_push_frequency: int=15,
 ):
     """
     Executes policy interaction within the environment.
@@ -265,8 +267,12 @@ def act_with_policy(
     # Add counters for intervention rate calculation
     episode_intervention_steps = 0
     episode_total_steps = 0
+    # for multi-env using running average reward
+    reward_running_buffer = deque(maxlen=100)
 
     policy_timer = TimerManager("Policy inference", log=False)
+
+    last_time_policy_received = time.time()
 
     for interaction_step in range(cfg.policy.online_steps):
         start_time = time.perf_counter()
@@ -287,19 +293,19 @@ def act_with_policy(
 
         next_obs, reward, done, truncated, info = online_env.step(action)
 
-        sum_reward_episode += float(reward)
+        sum_reward_episode += float(reward.mean())
         # Increment total steps counter for intervention rate
         episode_total_steps += 1
+        # for multi_env
+        reward_running_buffer.append(reward.mean())
 
-        # NOTE: We override the action if the intervention is True, because the action applied is the intervention action
-        if "is_intervention" in info and info["is_intervention"]:
-            # NOTE: The action space for demonstration before hand is with the full action space
-            # but sometimes for example we want to deactivate the gripper
-            action = info["action_intervention"]
-            episode_intervention = True
-            # Increment intervention steps counter
-            episode_intervention_steps += 1
-
+        #! Handle IsaacSim Lwlab Last timestamp Bug, the env will be automatically reset
+        #! so need to manually replace next_obs with info['final_obs']
+        if torch.any(done) or torch.any(truncated):
+            obs_with_reset = next_obs
+            next_obs = info['final_obs']['policy'] # replace with last obs before reset
+        info.pop('final_obs') # remove final_obs from info to save space
+            
         list_transition_to_send_to_learner.append(
             Transition(
                 state=obs,
@@ -312,49 +318,40 @@ def act_with_policy(
             )
         )
         # assign obs to the next obs and continue the rollout
-        obs = next_obs
+        if torch.any(done) or torch.any(truncated):
+            obs = obs_with_reset
+        else:
+            obs = next_obs
 
-        if done or truncated:
-            logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
-
+        if time.time() - last_time_policy_received > policy_parameters_push_frequency:
+            logging.info(f"[ACTOR] Global step {interaction_step}: Running average reward: {sum(reward_running_buffer) / len(reward_running_buffer)}")
             update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
-
-            if len(list_transition_to_send_to_learner) > 0:
-                push_transitions_to_transport_queue(
-                    transitions=list_transition_to_send_to_learner,
-                    transitions_queue=transitions_queue,
-                )
-                list_transition_to_send_to_learner = []
+            last_time_policy_received = time.time()
 
             stats = get_frequency_stats(policy_timer)
             policy_timer.reset()
-
-            # Calculate intervention rate
-            intervention_rate = 0.0
-            if episode_total_steps > 0:
-                intervention_rate = episode_intervention_steps / episode_total_steps
 
             # Send episodic reward to the learner
             interactions_queue.put(
                 python_object_to_bytes(
                     {
-                        "Episodic reward": sum_reward_episode,
                         "Interaction step": interaction_step,
-                        "Episode intervention": int(episode_intervention),
-                        "Intervention rate": intervention_rate,
+                        "Running average reward": sum(reward_running_buffer) / len(reward_running_buffer),
                         **stats,
                     }
                 )
             )
+        
+        # Send transitions to the learner
+        # TODO: sz: check blocking time when sent every time
+        if len(list_transition_to_send_to_learner) > 0:
+            push_transitions_to_transport_queue(
+                transitions=list_transition_to_send_to_learner,
+                transitions_queue=transitions_queue,
+            )
+            list_transition_to_send_to_learner = []
 
-            # Reset intervention counters
-            sum_reward_episode = 0.0
-            episode_intervention = False
-            episode_intervention_steps = 0
-            episode_total_steps = 0
-            obs, info = online_env.reset()
-
-        if cfg.env.fps is not None:
+        if cfg.env.fps is not None and cfg.env.type not in {"lwlab"}:
             dt_time = time.perf_counter() - start_time
             busy_wait(1 / cfg.env.fps - dt_time)
 

@@ -312,7 +312,7 @@ class MetaworldEnv(EnvConfig):
 
 
 @dataclass
-class LwlabEnvTransformConfig(EnvTransformConfig):
+class LwlabHILSerlProcessorConfig(HILSerlProcessorConfig):
     """Configuration for the LwLab environment."""
     ENV_STATE_KEYS: list[str] | None = None # privileged keys
     OBS_STATE_KEYS: list[str] | None = None # observation keys
@@ -321,54 +321,15 @@ class LwlabEnvTransformConfig(EnvTransformConfig):
 
 @EnvConfig.register_subclass("lwlab")
 @dataclass
-class HILEnvConfig(EnvConfig):
-    """Configuration for the HIL environment."""
+class HILSerlRobotEnvConfig(EnvConfig):
+    """Configuration for the HILSerlRobotEnv environment."""
 
-    name: str = "LwLab"
-    task: str | None = "LwLabTask"
-    use_viewer: bool = True
-    gripper_penalty: float | None = None
-    use_gamepad: bool = True
-    state_dim: int | None = None
-    action_dim: int | None = None
-    fps: int | None = None
-    episode_length: int | None = None
-    video_record: VideoRecordConfig = field(default_factory=VideoRecordConfig)
-    # features: dict[str, PolicyFeature] = field(
-    #     default_factory=lambda: {
-    #         "action": PolicyFeature(type=FeatureType.ACTION, shape=(4,)),
-    #         "observation.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 128, 128)),
-    #         "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(18,)),
-    #     }
-    # )
-    # features_map: dict[str, str] = field(
-    #     default_factory=lambda: {
-    #         "action": ACTION,
-    #         "observation.image": OBS_IMAGE,
-    #         "observation.state": OBS_STATE,
-    #     }
-    # )
-    ################# args from hilserlrobotenv
-    reward_classifier_pretrained_path: str | None = None
-    robot_config: RobotConfig | None = None
-    teleop_config: TeleoperatorConfig | None = None
-    wrapper: LwlabEnvTransformConfig | None = None
-    mode: str | None = None  # Either "record", "replay", None
-    repo_id: str | None = None
-    dataset_root: str | None = None
-    num_episodes: int = 10  # only for record mode
-    episode: int = 0
-    device: str = "cuda"
-    push_to_hub: bool = True
-    pretrained_policy_name_or_path: str | None = None
-    # For the reward classifier, to record more positive examples after a success
-    number_of_steps_after_success: int = 0
-    ############################
+    robot: RobotConfig | None = None
+    teleop: TeleoperatorConfig | None = None
+    processor: LwlabHILSerlProcessorConfig = field(default_factory=LwlabHILSerlProcessorConfig)
+
+    name: str = "lwlab_sim"
 
     @property
     def gym_kwargs(self) -> dict:
-        return {
-            "use_viewer": self.use_viewer,
-            "use_gamepad": self.use_gamepad,
-            "gripper_penalty": self.gripper_penalty,
-        }
+        return {}

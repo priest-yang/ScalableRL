@@ -62,7 +62,7 @@ from torch.optim.optimizer import Optimizer
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.constants import (
+from lerobot.utils.constants import (
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
     PRETRAINED_MODEL_DIR,
@@ -1048,9 +1048,9 @@ def get_observation_features(
         return None, None
 
     with torch.no_grad():
-        observation_features = policy.actor.encoder.get_cached_image_features(observations, normalize=True)
+        observation_features = policy.actor.encoder.get_cached_image_features(observations)
         next_observation_features = policy.actor.encoder.get_cached_image_features(
-            next_observations, normalize=True
+            next_observations
         )
 
     return observation_features, next_observation_features
