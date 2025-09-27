@@ -314,7 +314,7 @@ def act_with_policy(
                 next_state=next_obs,
                 done=done,
                 truncated=truncated,  # TODO: (azouitine) Handle truncation properly
-                complementary_info=info['log'],
+                complementary_info={"is_success": info['is_success']}, # TODO: sz: add more info here (partial keys' name include '/', will cause error when converting to lerobot dataset, skip here)
             )
         )
         # assign obs to the next obs and continue the rollout
