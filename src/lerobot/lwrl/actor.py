@@ -90,7 +90,7 @@ from lerobot.utils.utils import (
     init_logging,
 )
 
-from lerobot.lwrl.gym_manipulator import (
+from lerobot.rl.gym_manipulator import (
     create_transition,
     make_processors,
     make_robot_env,
@@ -242,8 +242,13 @@ def act_with_policy(
 
     logging.info("make_env online")
 
-    online_env, teleop_device = make_robot_env(cfg=cfg.env)
-    env_processor, action_processor = make_processors(online_env, teleop_device, cfg.env, cfg.policy.device)
+    if cfg.env.type == "lwlab":
+        from lerobot.lwrl.sim.lwlab.env_lwlab import make_lwlab_robot_env, make_lwlab_processors
+        online_env, teleop_device = make_lwlab_robot_env(cfg=cfg.env)
+        env_processor, action_processor = make_lwlab_processors(online_env, teleop_device, cfg.env, cfg.policy.device)
+    else:
+        online_env, teleop_device = make_robot_env(cfg=cfg.env)
+        env_processor, action_processor = make_processors(online_env, teleop_device, cfg.env, cfg.policy.device)
 
     set_seed(cfg.seed)
     device = get_safe_torch_device(cfg.policy.device, log=True)
@@ -312,13 +317,23 @@ def act_with_policy(
             action = online_env.action_space.sample()
 
         # Use the new step function
-        new_transition = step_env_and_process_transition(
-            env=online_env,
-            transition=transition,
-            action=action,
-            env_processor=env_processor,
-            action_processor=action_processor,
-        )
+        if cfg.env.type == "lwlab":
+            from lerobot.lwrl.sim.lwlab.env_lwlab import step_lwlab_env_and_process_transition
+            new_transition = step_lwlab_env_and_process_transition(
+                env=online_env,
+                transition=transition,
+                action=action,
+                env_processor=env_processor,
+                action_processor=action_processor,
+            )
+        else:
+            new_transition = step_env_and_process_transition(
+                env=online_env,
+                transition=transition,
+                action=action,
+                env_processor=env_processor,
+                action_processor=action_processor,
+            )
 
         # Extract values from processed transition
         next_observation = {
