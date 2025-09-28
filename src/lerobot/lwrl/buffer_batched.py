@@ -24,6 +24,9 @@ import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, REWARD
+from lerobot.utils.transition import Transition
+
 
 class BatchTransition(TypedDict):
     state: dict[str, torch.Tensor]
@@ -72,105 +75,6 @@ def random_shift(images: torch.Tensor, pad: int = 4):
     _, _, h, w = images.shape
     images = F.pad(input=images, pad=(pad, pad, pad, pad), mode="replicate")
     return random_crop_vectorized(images=images, output_size=(h, w))
-
-
-# Utility function to guess shapes/dtypes from a tensor
-def guess_feature_info(t, name: str):
-    """
-    Return a dictionary with the 'dtype' and 'shape' for a given tensor or scalar value.
-    If it looks like a 3D (C,H,W) or (H,W,C) shape, we might consider it an 'image'.
-    Otherwise default to appropriate dtype for numeric.
-    """
-
-    shape = tuple(t.shape)
-    # Basic guess: if we have exactly 3 dims and shape[0] in {1, 3}, guess 'image'
-    if len(shape) == 3 and (shape[0] in [1, 3] or shape[2] in [1, 3]):
-        return {
-            "dtype": "image",
-            "shape": shape,
-        }
-    else:
-        # Otherwise treat as numeric
-        return {
-            "dtype": "float32",
-            "shape": shape,
-        }
-
-
-def concatenate_batch_transitions(
-    left_batch_transitions: BatchTransition, right_batch_transition: BatchTransition
-) -> BatchTransition:
-    """
-    Concatenates two BatchTransition objects into one.
-
-    This function merges the right BatchTransition into the left one by concatenating
-    all corresponding tensors along dimension 0. The operation modifies the left_batch_transitions
-    in place and also returns it.
-
-    Args:
-        left_batch_transitions (BatchTransition): The first batch to concatenate and the one
-            that will be modified in place.
-        right_batch_transition (BatchTransition): The second batch to append to the first one.
-
-    Returns:
-        BatchTransition: The concatenated batch (same object as left_batch_transitions).
-
-    Warning:
-        This function modifies the left_batch_transitions object in place.
-    """
-    # Concatenate state fields
-    left_batch_transitions["state"] = {
-        key: torch.cat(
-            [left_batch_transitions["state"][key], right_batch_transition["state"][key]],
-            dim=0,
-        )
-        for key in left_batch_transitions["state"]
-    }
-
-    # Concatenate basic fields
-    left_batch_transitions["action"] = torch.cat(
-        [left_batch_transitions["action"], right_batch_transition["action"]], dim=0
-    )
-    left_batch_transitions["reward"] = torch.cat(
-        [left_batch_transitions["reward"], right_batch_transition["reward"]], dim=0
-    )
-
-    # Concatenate next_state fields
-    left_batch_transitions["next_state"] = {
-        key: torch.cat(
-            [left_batch_transitions["next_state"][key], right_batch_transition["next_state"][key]],
-            dim=0,
-        )
-        for key in left_batch_transitions["next_state"]
-    }
-
-    # Concatenate done and truncated fields
-    left_batch_transitions["done"] = torch.cat(
-        [left_batch_transitions["done"], right_batch_transition["done"]], dim=0
-    )
-    left_batch_transitions["truncated"] = torch.cat(
-        [left_batch_transitions["truncated"], right_batch_transition["truncated"]],
-        dim=0,
-    )
-
-    # Handle complementary_info
-    left_info = left_batch_transitions.get("complementary_info")
-    right_info = right_batch_transition.get("complementary_info")
-
-    # Only process if right_info exists
-    if right_info is not None:
-        # Initialize left complementary_info if needed
-        if left_info is None:
-            left_batch_transitions["complementary_info"] = right_info
-        else:
-            # Concatenate each field
-            for key in right_info:
-                if key in left_info:
-                    left_info[key] = torch.cat([left_info[key], right_info[key]], dim=0)
-                else:
-                    left_info[key] = right_info[key]
-
-    return left_batch_transitions
 
 
 class ParallelReplayBuffer:
@@ -672,7 +576,7 @@ class ParallelReplayBuffer:
         if list_transition:
             first_transition = list_transition[0]
             first_state = {k: v.to(device) for k, v in first_transition["state"].items()}
-            first_action = first_transition["action"].to(device)
+            first_action = first_transition[ACTION].to(device)
 
             # Get complementary info if available
             first_complementary_info = None
@@ -770,12 +674,12 @@ class ParallelReplayBuffer:
 
         # Add "action"
         sample_action = self.actions[0, 0]  # First environment, first position
-        act_info = guess_feature_info(t=sample_action, name="action")
-        features["action"] = act_info
+        act_info = guess_feature_info(t=sample_action, name=ACTION)
+        features[ACTION] = act_info
 
         # Add "reward" and "done"
-        features["next.reward"] = {"dtype": "float32", "shape": (1,)}
-        features["next.done"] = {"dtype": "bool", "shape": (1,)}
+        features[REWARD] = {"dtype": "float32", "shape": (1,)}
+        features[DONE] = {"dtype": "bool", "shape": (1,)}
 
         # Add state keys
         for key in self.states:
@@ -828,9 +732,9 @@ class ParallelReplayBuffer:
                     frame_dict[key] = self.states[key][env_idx, actual_idx].cpu()
 
                 # Fill action, reward, done
-                frame_dict["action"] = self.actions[env_idx, actual_idx].cpu()
-                frame_dict["next.reward"] = torch.tensor([self.rewards[env_idx, actual_idx]], dtype=torch.float32).cpu()
-                frame_dict["next.done"] = torch.tensor([self.dones[env_idx, actual_idx]], dtype=torch.bool).cpu()
+                frame_dict[ACTION] = self.actions[env_idx, actual_idx].cpu()
+                frame_dict[REWARD] = torch.tensor([self.rewards[env_idx, actual_idx]], dtype=torch.float32).cpu()
+                frame_dict[DONE] = torch.tensor([self.dones[env_idx, actual_idx]], dtype=torch.bool).cpu()
                 frame_dict["task"] = task_name
 
                 # Add complementary_info if available
@@ -883,7 +787,28 @@ class ParallelReplayBuffer:
     ) -> list[BatchTransition]:
         """
         Convert a LeRobotDataset into a list of RL (s, a, r, s', done) transitions.
-        Same implementation as the original ReplayBuffer.
+
+        Args:
+            dataset (LeRobotDataset):
+                The dataset to convert. Each item in the dataset is expected to have
+                at least the following keys:
+                {
+                    "action": ...
+                    "next.reward": ...
+                    "next.done": ...
+                    "episode_index": ...
+                }
+                plus whatever your 'state_keys' specify.
+
+            state_keys (Sequence[str] | None):
+                The dataset keys to include in 'state' and 'next_state'. Their names
+                will be kept as-is in the output transitions. E.g.
+                ["observation.state", "observation.environment_state"].
+                If None, you must handle or define default keys.
+
+        Returns:
+            transitions (List[Transition]):
+                A list of Transition dictionaries with the same length as `dataset`.
         """
         if state_keys is None:
             raise ValueError("State keys must be provided when converting LeRobotDataset to Transitions.")
@@ -893,7 +818,7 @@ class ParallelReplayBuffer:
 
         # Check if the dataset has "next.done" key
         sample = dataset[0]
-        has_done_key = "next.done" in sample
+        has_done_key = DONE in sample
 
         # Check for complementary_info keys
         complementary_info_keys = [key for key in sample if key.startswith("complementary_info.")]
@@ -913,14 +838,14 @@ class ParallelReplayBuffer:
                 current_state[key] = val.unsqueeze(0)  # Add batch dimension
 
             # ----- 2) Action -----
-            action = current_sample["action"].unsqueeze(0)  # Add batch dimension
+            action = current_sample[ACTION].unsqueeze(0)  # Add batch dimension
 
             # ----- 3) Reward and done -----
-            reward = current_sample["next.reward"]
+            reward = current_sample[REWARD]
 
             # Determine done flag - use next.done if available, otherwise infer from episode boundaries
             if has_done_key:
-                done = current_sample["next.done"]
+                done = current_sample[DONE]
             else:
                 # If this is the last frame or if next frame is in a different episode, mark as done
                 done = False
@@ -977,3 +902,102 @@ class ParallelReplayBuffer:
             transitions.append(transition)
 
         return transitions
+
+
+# Utility function to guess shapes/dtypes from a tensor
+def guess_feature_info(t, name: str):
+    """
+    Return a dictionary with the 'dtype' and 'shape' for a given tensor or scalar value.
+    If it looks like a 3D (C,H,W) shape, we might consider it an 'image'.
+    Otherwise default to appropriate dtype for numeric.
+    """
+
+    shape = tuple(t.shape)
+    # Basic guess: if we have exactly 3 dims and shape[0] in {1, 3}, guess 'image'
+    if len(shape) == 3 and shape[0] in [1, 3]:
+        return {
+            "dtype": "image",
+            "shape": shape,
+        }
+    else:
+        # Otherwise treat as numeric
+        return {
+            "dtype": "float32",
+            "shape": shape,
+        }
+
+
+def concatenate_batch_transitions(
+    left_batch_transitions: BatchTransition, right_batch_transition: BatchTransition
+) -> BatchTransition:
+    """
+    Concatenates two BatchTransition objects into one.
+
+    This function merges the right BatchTransition into the left one by concatenating
+    all corresponding tensors along dimension 0. The operation modifies the left_batch_transitions
+    in place and also returns it.
+
+    Args:
+        left_batch_transitions (BatchTransition): The first batch to concatenate and the one
+            that will be modified in place.
+        right_batch_transition (BatchTransition): The second batch to append to the first one.
+
+    Returns:
+        BatchTransition: The concatenated batch (same object as left_batch_transitions).
+
+    Warning:
+        This function modifies the left_batch_transitions object in place.
+    """
+    # Concatenate state fields
+    left_batch_transitions["state"] = {
+        key: torch.cat(
+            [left_batch_transitions["state"][key], right_batch_transition["state"][key]],
+            dim=0,
+        )
+        for key in left_batch_transitions["state"]
+    }
+
+    # Concatenate basic fields
+    left_batch_transitions[ACTION] = torch.cat(
+        [left_batch_transitions[ACTION], right_batch_transition[ACTION]], dim=0
+    )
+    left_batch_transitions["reward"] = torch.cat(
+        [left_batch_transitions["reward"], right_batch_transition["reward"]], dim=0
+    )
+
+    # Concatenate next_state fields
+    left_batch_transitions["next_state"] = {
+        key: torch.cat(
+            [left_batch_transitions["next_state"][key], right_batch_transition["next_state"][key]],
+            dim=0,
+        )
+        for key in left_batch_transitions["next_state"]
+    }
+
+    # Concatenate done and truncated fields
+    left_batch_transitions["done"] = torch.cat(
+        [left_batch_transitions["done"], right_batch_transition["done"]], dim=0
+    )
+    left_batch_transitions["truncated"] = torch.cat(
+        [left_batch_transitions["truncated"], right_batch_transition["truncated"]],
+        dim=0,
+    )
+
+    # Handle complementary_info
+    left_info = left_batch_transitions.get("complementary_info")
+    right_info = right_batch_transition.get("complementary_info")
+
+    # Only process if right_info exists
+    if right_info is not None:
+        # Initialize left complementary_info if needed
+        if left_info is None:
+            left_batch_transitions["complementary_info"] = right_info
+        else:
+            # Concatenate each field
+            for key in right_info:
+                if key in left_info:
+                    left_info[key] = torch.cat([left_info[key], right_info[key]], dim=0)
+                else:
+                    left_info[key] = right_info[key]
+
+    return left_batch_transitions
