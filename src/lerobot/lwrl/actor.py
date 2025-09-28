@@ -24,7 +24,7 @@ Examples of usage:
 
 - Start an actor server for real robot training with human-in-the-loop intervention:
 ```bash
-python -m lerobot.scripts.rl.actor --config_path src/lerobot/configs/train_config_hilserl_so100.json
+python -m lerobot.lwrl.actor --config_path src/lerobot/configs/train_config_hilserl_so100.json
 ```
 
 **NOTE**: The actor server requires a running learner server to connect to. Ensure the learner
@@ -62,9 +62,10 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.factory import make_policy
 from lerobot.policies.sac.modeling_sac import SACPolicy
+from lerobot.processor import TransitionKey
 from lerobot.robots import so100_follower  # noqa: F401
-from lerobot.scripts.lwrl.gym_manipulator import make_robot_env
 from lerobot.teleoperators import gamepad, so101_leader  # noqa: F401
+from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.transport import services_pb2, services_pb2_grpc
 from lerobot.transport.utils import (
     bytes_to_state_dict,
@@ -74,8 +75,8 @@ from lerobot.transport.utils import (
     send_bytes_in_chunks,
     transitions_to_bytes,
 )
-from lerobot.utils.process import ProcessSignalHandler
-from lerobot.utils.queue import get_last_item_from_queue
+from lerobot.rl.process import ProcessSignalHandler
+from lerobot.rl.queue import get_last_item_from_queue
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.transition import (
@@ -88,13 +89,18 @@ from lerobot.utils.utils import (
     get_safe_torch_device,
     init_logging,
 )
+
+from lerobot.lwrl.gym_manipulator import (
+    create_transition,
+    make_processors,
+    make_robot_env,
+    step_env_and_process_transition,
+)
+
 from collections import deque
 ACTOR_SHUTDOWN_TIMEOUT = 30
 
-
-#################################################
-# Main entry point #
-#################################################
+# Main entry point
 
 
 @parser.wrap()
@@ -202,9 +208,7 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
     logging.info("[ACTOR] queues closed")
 
 
-#################################################
-# Core algorithm functions #
-#################################################
+# Core algorithm functions
 
 
 def act_with_policy(
@@ -238,7 +242,8 @@ def act_with_policy(
 
     logging.info("make_env online")
 
-    online_env = make_robot_env(cfg=cfg.env)
+    online_env, teleop_device = make_robot_env(cfg=cfg.env)
+    env_processor, action_processor = make_processors(online_env, teleop_device, cfg.env, cfg.policy.device)
 
     set_seed(cfg.seed)
     device = get_safe_torch_device(cfg.policy.device, log=True)
@@ -259,6 +264,17 @@ def act_with_policy(
     assert isinstance(policy, nn.Module)
 
     obs, info = online_env.reset()
+    env_processor.reset()
+    action_processor.reset()
+
+    # Process initial observation
+    transition = create_transition(
+        observation=obs,
+        reward=torch.zeros((online_env.num_envs,), dtype=torch.float32, device=online_env.device),
+        done=torch.zeros((online_env.num_envs,), dtype=torch.bool, device=online_env.device),
+        truncated=torch.zeros((online_env.num_envs,), dtype=torch.bool, device=online_env.device),
+        info=info)
+    transition = env_processor(transition)
 
     # NOTE: For the moment we will solely handle the case of a single environment
     sum_reward_episode = 0
@@ -280,18 +296,44 @@ def act_with_policy(
             logging.info("[ACTOR] Shutting down act_with_policy")
             return
 
+        observation = {
+            k: v for k, v in transition[TransitionKey.OBSERVATION].items() if k in cfg.policy.input_features
+        }
+
         if interaction_step >= cfg.policy.online_step_before_learning:
             # Time policy inference and check if it meets FPS requirement
             with policy_timer:
-                action = policy.select_action(batch=obs)
+                # Extract observation from transition for policy
+                action = policy.select_action(batch=observation)
             policy_fps = policy_timer.fps_last
 
             log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
-
         else:
             action = online_env.action_space.sample()
 
-        next_obs, reward, done, truncated, info = online_env.step(action)
+        # Use the new step function
+        new_transition = step_env_and_process_transition(
+            env=online_env,
+            transition=transition,
+            action=action,
+            env_processor=env_processor,
+            action_processor=action_processor,
+        )
+
+        # Extract values from processed transition
+        next_observation = {
+            k: v
+            for k, v in new_transition[TransitionKey.OBSERVATION].items()
+            if k in cfg.policy.input_features
+        }
+
+        # Teleop action is the action that was executed in the environment
+        # It is either the action from the teleop device or the action from the policy
+        executed_action = new_transition[TransitionKey.ACTION]
+        reward = new_transition[TransitionKey.REWARD]
+        done = new_transition.get(TransitionKey.DONE, torch.tensor(False))
+        truncated = new_transition.get(TransitionKey.TRUNCATED, torch.tensor(False))
+        info = new_transition.get(TransitionKey.INFO, {})
 
         sum_reward_episode += float(reward.mean())
         # Increment total steps counter for intervention rate
@@ -302,26 +344,40 @@ def act_with_policy(
         #! Handle IsaacSim Lwlab Last timestamp Bug, the env will be automatically reset
         #! so need to manually replace next_obs with info['final_obs']
         if torch.any(done) or torch.any(truncated):
-            obs_with_reset = next_obs
-            next_obs = info['final_obs']['policy'] # replace with last obs before reset
-        info.pop('final_obs') # remove final_obs from info to save space
+            new_transition_with_reset = new_transition
+            # recreate real transition and overwrite next observation (pass processer)
+            next_observation_raw = info['final_obs']['policy'] # replace with last obs before reset
+            new_transition_raw = create_transition(observation=next_observation_raw, info=info)
+            # Extract values from processed transition
+            new_transition = env_processor(new_transition_raw)
+            next_observation = {
+                k: v
+                for k, v in new_transition[TransitionKey.OBSERVATION].items()
+                if k in cfg.policy.input_features
+            }
+            # make sure those will not be used!! (only create to use processer)
+            del new_transition, new_transition_raw
+
+            info.pop('final_obs') # remove final_obs from info to save space
             
         list_transition_to_send_to_learner.append(
             Transition(
-                state=obs,
-                action=action,
+                state=observation,
+                action=executed_action,
                 reward=reward,
-                next_state=next_obs,
+                next_state=next_observation,
                 done=done,
-                truncated=truncated,  # TODO: (azouitine) Handle truncation properly
-                complementary_info={"is_success": info['is_success']}, # TODO: sz: add more info here (partial keys' name include '/', will cause error when converting to lerobot dataset, skip here)
+                truncated=truncated,
+                complementary_info={
+                    "is_success": info['is_success'],
+                },
             )
         )
         # assign obs to the next obs and continue the rollout
         if torch.any(done) or torch.any(truncated):
-            obs = obs_with_reset
+            transition = new_transition_with_reset
         else:
-            obs = next_obs
+            transition = new_transition
 
         if time.time() - last_time_policy_received > policy_parameters_push_frequency:
             logging.info(f"[ACTOR] Global step {interaction_step}: Running average reward: {sum(reward_running_buffer) / len(reward_running_buffer)}")
@@ -356,9 +412,7 @@ def act_with_policy(
             busy_wait(1 / cfg.env.fps - dt_time)
 
 
-#################################################
-#  Communication Functions - Group all gRPC/messaging functions  #
-#################################################
+#  Communication Functions - Group all gRPC/messaging functions
 
 
 def establish_learner_connection(
@@ -603,9 +657,7 @@ def interactions_stream(
     return services_pb2.Empty()
 
 
-#################################################
-#  Policy functions #
-#################################################
+#  Policy functions
 
 
 def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device):
@@ -637,9 +689,7 @@ def update_policy_parameters(policy: SACPolicy, parameters_queue: Queue, device)
             logging.info("[ACTOR] Loaded discrete critic parameters from Learner.")
 
 
-#################################################
-#  Utilities functions #
-#################################################
+#  Utilities functions
 
 
 def push_transitions_to_transport_queue(transitions: list, transitions_queue):
