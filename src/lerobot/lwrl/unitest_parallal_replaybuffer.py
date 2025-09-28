@@ -12,11 +12,11 @@ from lwlab.distributed.proxy import RemoteEnv
 import random
 import argparse
 from tqdm import tqdm
-from lwlab.utils.config_loader import config_loader
+from lwlab.rl.config_loader import config_loader
 import json
 
 from policy.maniskill_ppo.agent import PPOArgs, PPO, observation
-from lerobot.utils.buffer_batched import ParallelReplayBuffer, BatchTransition
+from lerobot.lwrl.buffer_batched import ParallelReplayBuffer, BatchTransition
 from lerobot.utils.transition import move_transition_to_device
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
