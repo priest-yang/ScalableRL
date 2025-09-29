@@ -360,9 +360,24 @@ def act_with_policy(
         #! so need to manually replace next_obs with info['final_obs']
         if torch.any(done) or torch.any(truncated):
             new_transition_with_reset = new_transition
+            # re-write done and truncated
+            new_transition_with_reset[TransitionKey.DONE] = torch.zeros_like(done, device=device, dtype=torch.bool)
+            new_transition_with_reset[TransitionKey.TRUNCATED] = torch.zeros_like(truncated, device=device, dtype=torch.bool)
+            new_transition_with_reset[TransitionKey.REWARD] = torch.zeros_like(reward, device=device, dtype=torch.float32)
+            new_transition_with_reset[TransitionKey.INFO] = {}
+            #! original code will reset processor here, but skip here
+            # TODO: need to implement reset processor per env index
+            # env_processor.reset()
+            # action_processor.reset()
+            
             # recreate real transition and overwrite next observation (pass processer)
             next_observation_raw = info['final_obs']['policy'] # replace with last obs before reset
-            new_transition_raw = create_transition(observation=next_observation_raw, info=info)
+            new_transition_raw = create_transition(
+                observation=next_observation_raw, info=info,
+                done=torch.zeros_like(done, device=device, dtype=torch.bool),
+                truncated=torch.zeros_like(truncated, device=device, dtype=torch.bool),
+                reward=torch.zeros_like(reward, device=device, dtype=torch.float32),
+            )
             # Extract values from processed transition
             new_transition = env_processor(new_transition_raw)
             next_observation = {
@@ -384,7 +399,7 @@ def act_with_policy(
                 done=done,
                 truncated=truncated,
                 complementary_info={
-                    "is_success": info['is_success'],
+                    "is_success": info.get('is_success', torch.zeros_like(done, device=device, dtype=torch.bool)).to(torch.float32),
                 },
             )
         )

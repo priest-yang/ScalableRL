@@ -239,9 +239,10 @@ class LwlabSparseRewardProcessorStep(ProcessorStep):
         
         # Handle termination/truncation logic
         # Set truncated to True if either truncated or terminated is True
-        terminated = transition.get(TransitionKey.DONE, False)
-        truncated = transition.get(TransitionKey.TRUNCATED, False)
-        
+        assert TransitionKey.DONE in transition and TransitionKey.TRUNCATED in transition, "DONE and TRUNCATED must be in transition"
+        terminated = transition[TransitionKey.DONE]
+        truncated = transition[TransitionKey.TRUNCATED]
+
         if isinstance(terminated, torch.Tensor) and isinstance(truncated, torch.Tensor):
             new_done = torch.logical_or(truncated, terminated)
         else:
