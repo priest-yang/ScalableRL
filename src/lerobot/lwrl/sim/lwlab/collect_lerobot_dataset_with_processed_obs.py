@@ -9,7 +9,6 @@ Main features:
 3. Support flexible parameter configuration
 """
 
-from sympy.calculus.util import AccumulationBounds
 import torch
 import argparse
 import os
@@ -248,10 +247,10 @@ class DataCollector:
                 
                 # Create transition data
                 parallel_transition = BatchTransition(
-                    state=observation,
+                    state=copy.deepcopy(observation),
                     action=executed_action,
                     reward=reward,
-                    next_state=next_observation,
+                    next_state=copy.deepcopy(next_observation),
                     done=done,
                     truncated=truncated,
                     complementary_info={
@@ -270,7 +269,7 @@ class DataCollector:
                 
                 # Update progress bar
                 pbar.update(1)
-
+                
                 # Print statistics periodically
                 if step_count % 100 == 0:
                     pbar.set_postfix({
@@ -323,6 +322,15 @@ class DataCollector:
         
         print(f"Dataset saved to: {root_path}")
         print(f"Dataset frames: {len(dataset)}")
+
+        # test data
+        print("Testing dataset...")
+        for i in range(len(dataset)):
+            try:
+                dataset[i]
+            except Exception as e:
+                import ipdb; ipdb.set_trace()
+                print(f"Error at index {i}, need to re-generate dataset")
         
         # Validate dataset structure
         if len(dataset) > 0:
@@ -452,6 +460,8 @@ if __name__ == "__main__":
     main(cfg)
 
 """
-conda activate hilserl
-/home/johndoe/Documents/lerobot-hilserl/src/lerobot/lwrl/sim/lwlab/collect_lerobot_dataset_with_processed_obs.py --config_path="/home/johndoe/Documents/lerobot-hilserl/src/lerobot/configs/rl/hilserl_sim_lwlab_lerobot/train_lwlab_hil_lerobotPnP.json
+hilserl
+python /home/johndoe/Documents/lerobot-hilserl/src/lerobot/lwrl/sim/lwlab/collect_lerobot_dataset_with_processed_obs.py \
+    --config_path="/home/johndoe/Documents/lerobot-hilserl/src/lerobot/configs/rl/hilserl_sim_lwlab_lerobot/train_lwlab_hil_lerobotPnP.json"
+
 """
