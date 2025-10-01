@@ -422,7 +422,7 @@ def act_with_policy(
                 python_object_to_bytes(
                     {
                         "Interaction step": interaction_step,
-                        "Running average reward": sum(reward_running_buffer) / len(reward_running_buffer),
+                        "Running average reward": float(sum(reward_running_buffer) / len(reward_running_buffer)),
                         **stats,
                     }
                 )
