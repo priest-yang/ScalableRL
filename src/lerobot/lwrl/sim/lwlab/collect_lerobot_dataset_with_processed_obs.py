@@ -39,6 +39,43 @@ from lerobot.processor import TransitionKey
 from lerobot.configs import parser
 
 
+def save_image_uint8(image_tensor, filepath):
+    """
+    save uint8 image to file
+    Args:
+        image_tensor: torch.Tensor or numpy.ndarray
+        filepath: str
+    """
+    import numpy as np
+    from PIL import Image
+    import os
+
+    # 确保输入是numpy数组格式
+    if isinstance(image_tensor, torch.Tensor):
+        # 将张量转换为numpy数组
+        image_np = image_tensor.detach().cpu().numpy()
+    else:
+        image_np = image_tensor
+    
+    # ensure data type is uint8
+    if image_np.dtype != np.uint8:
+        image_np = (image_np*255).astype(np.uint8)
+    
+    # ensure shape is [H, W, 3]
+    if len(image_np.shape) != 3:
+        raise ValueError(f"image should has 3 dimensions, but got {image_np.shape}")
+    elif image_np.shape[2] != 3:
+        import einops
+        image_np = einops.rearrange(image_np, "c h w -> h w c")
+
+    pil_image = Image.fromarray(image_np, 'RGB')
+    
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    
+    pil_image.save(filepath)
+    print(f"image saved to: {filepath}")
+
+
 @dataclass
 class CollectionArgs:
     """Data collection parameter configuration"""
@@ -258,6 +295,10 @@ class DataCollector:
                     },
                 )
 
+                # # test visualize image
+                # save_image_uint8((parallel_transition['state']['observation.images.image_global'][0], './buffer1.png')
+                # self.buffer.states['observation.images.image_global'][0, 0]
+                
                 # assign obs to the next obs and continue the rollout
                 if torch.any(done) or torch.any(truncated):
                     transition = new_transition_with_reset
