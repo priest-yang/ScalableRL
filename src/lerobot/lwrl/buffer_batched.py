@@ -81,7 +81,7 @@ class ParallelReplayBuffer:
     def __init__(
         self,
         capacity: int,
-        num_envs: int,
+        num_envs: int = 1,
         device: str = "cuda:0",
         state_keys: Sequence[str] | None = None,
         image_augmentation_function: Callable | None = None,
@@ -110,6 +110,9 @@ class ParallelReplayBuffer:
             raise ValueError("Capacity must be greater than 0.")
         if num_envs <= 0:
             raise ValueError("Number of environments must be greater than 0.")
+
+        capacity = capacity // num_envs
+        print(f"Updated Capacity: {self.capacity}")
 
         self.capacity = capacity
         self.num_envs = num_envs
@@ -291,7 +294,7 @@ class ParallelReplayBuffer:
                     env_indices.append((env_idx, env_idx_tensor))
 
         # Identify image keys that need augmentation
-        image_keys = [k for k in self.states if k.startswith("observation.image")] if self.use_drq else []
+        image_keys = [k for k in self.states if k.startswith(OBS_IMAGE)] if self.use_drq else []
 
         # Create batched state and next_state
         batch_state = {}
