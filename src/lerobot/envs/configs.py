@@ -329,6 +329,7 @@ class HILSerlRobotEnvConfig(EnvConfig):
     processor: LwlabHILSerlProcessorConfig = field(default_factory=LwlabHILSerlProcessorConfig)
 
     name: str = "lwlab_sim"
+    num_envs: int = 1
 
     @property
     def gym_kwargs(self) -> dict:
