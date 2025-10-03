@@ -112,7 +112,7 @@ class ParallelReplayBuffer:
             raise ValueError("Number of environments must be greater than 0.")
 
         capacity = capacity // num_envs
-        print(f"Updated Capacity: {self.capacity}")
+        print(f"Updated Capacity: {capacity}")
 
         self.capacity = capacity
         self.num_envs = num_envs
@@ -219,6 +219,7 @@ class ParallelReplayBuffer:
             truncated: tensor with shape (num_envs,)
             complementary_info: dict of tensors with shape (num_envs, ...) or None
         """
+
         # Initialize storage if this is the first transition
         if not self.initialized:
             self._initialize_storage(state=state, action=action, complementary_info=complementary_info)
@@ -258,128 +259,92 @@ class ParallelReplayBuffer:
         Sample a random batch of transitions from all environments uniformly.
         """
         if not self.initialized:
-            raise RuntimeError("Cannot sample from an empty buffer. Add transitions first.")
-
-        # Calculate total available transitions across all environments
-        total_size = self.size.sum().item()
-        if total_size == 0:
             raise RuntimeError("Cannot sample from an empty buffer.")
+        total = int(self.size.sum().item())
+        if total == 0:
+            raise RuntimeError("Cannot sample from an empty buffer.")
+        batch_size = min(batch_size, total)
 
-        batch_size = min(batch_size, total_size)
+        sizes = self.size.to(self.storage_device)        # [E]
+        pos   = self.position.to(self.storage_device)    # [E]
+        cum   = torch.zeros(self.num_envs + 1, device=self.storage_device, dtype=torch.long)
+        cum[1:] = torch.cumsum(sizes, dim=0)
 
-        # Sample uniformly from all environments
-        # First, determine how many samples to take from each environment
-        samples_per_env = torch.zeros(self.num_envs, dtype=torch.long, device=self.storage_device)
+        gidx = torch.randint(0, cum[-1].item(), (batch_size,), device=self.storage_device)
+        env  = torch.bucketize(gidx, cum[1:], right=True)           # [B], values in [0,E-1]
+        idx_in_env = gidx - cum[env]                    # [B] in [0, sizes[env]-1]
+
+        # safety check (keep during development)
+        assert torch.all((idx_in_env >= 0) & (idx_in_env < sizes[env])), "Index escaped env range"
+
+        # convert to ring-buffer absolute positions
+        actual = (pos[env] - sizes[env] + idx_in_env) % self.capacity  # [B]
+
+        # next indices (optimize_memory path)
+        if self.optimize_memory:
+            # avoid crossing unfilled region: if sizes[env] < capacity and idx_in_env == sizes[env]-1
+            last_mask = (sizes[env] < self.capacity) & (idx_in_env == sizes[env] - 1)
+            next_actual = (actual + 1) % self.capacity
+            # terminals should not advance
+            term_mask = (self.dones[env, actual] | self.truncateds[env, actual])
+            use_same = last_mask | term_mask
+        else:
+            next_actual = actual
+            use_same = torch.zeros_like(actual, dtype=torch.bool, device=self.storage_device)
+
+        use_same = use_same.to(self.device)
         
-        # Distribute batch_size samples across environments proportionally
-        remaining_batch = batch_size
-        for env_idx in range(self.num_envs):
-            if remaining_batch <= 0:
-                break
-            available_in_env = self.size[env_idx].item()
-            if available_in_env > 0:
-                # Take proportional samples from this environment
-                env_samples = min(available_in_env, remaining_batch)
-                samples_per_env[env_idx] = env_samples
-                remaining_batch -= env_samples
+        # gather states
+        batch_state, batch_next_state = {}, {}
+        for k in self.states:
+            s = self.states[k][env, actual].to(self.device)
+            if self.optimize_memory:
+                s_next_raw = self.states[k][env, next_actual].to(self.device)
+                s_next = torch.where(
+                    use_same.view(-1, *([1] * (s.ndim - 1))), s, s_next_raw
+                )
+            else:
+                s_next = self.next_states[k][env, actual].to(self.device)
 
-        # Generate random indices for each environment
-        env_indices = []
-        for env_idx in range(self.num_envs):
-            if samples_per_env[env_idx] > 0:
-                available_size = self.size[env_idx].item()
-                if available_size > 0:
-                    # Generate random indices within available data
-                    env_idx_tensor = torch.randint(low=0, high=available_size, size=(samples_per_env[env_idx],), device=self.storage_device)
-                    env_indices.append((env_idx, env_idx_tensor))
+            batch_state[k] = s
+            batch_next_state[k] = s_next
 
-        # Identify image keys that need augmentation
-        image_keys = [k for k in self.states if k.startswith(OBS_IMAGE)] if self.use_drq else []
+        # actions, rewards, dones, truncateds
+        batch_actions    = self.actions[env, actual].to(self.device)
+        batch_rewards    = self.rewards[env, actual].to(self.device)
+        batch_dones      = self.dones[env, actual].to(self.device).float()
+        batch_truncateds = self.truncateds[env, actual].to(self.device).float()
 
-        # Create batched state and next_state
-        batch_state = {}
-        batch_next_state = {}
-
-        # First pass: load all state tensors to target device
-        for key in self.states:
-            batch_state[key] = []
-            batch_next_state[key] = []
-
-            for env_idx, env_idx_tensor in env_indices:
-                # Convert random indices to actual buffer positions
-                # For circular buffer: actual_idx = (position - size + random_idx) % capacity
-                actual_indices = (self.position[env_idx] - self.size[env_idx] + env_idx_tensor) % self.capacity
-                
-                # Load states from this environment
-                env_states = self.states[key][env_idx][actual_indices].to(self.device)
-                batch_state[key].append(env_states)
-
-                if not self.optimize_memory:
-                    # Standard approach - load next_states directly
-                    env_next_states = self.next_states[key][env_idx][actual_indices].to(self.device)
-                    batch_next_state[key].append(env_next_states)
-                else:
-                    # Memory-optimized approach - get next_state from the next index
-                    next_actual_indices = (actual_indices + 1) % self.capacity
-                    env_next_states = self.states[key][env_idx][next_actual_indices].to(self.device)
-                    batch_next_state[key].append(env_next_states)
-
-            # Concatenate across environments
-            batch_state[key] = torch.cat(batch_state[key], dim=0)
-            batch_next_state[key] = torch.cat(batch_next_state[key], dim=0)
-
-        # Apply image augmentation in a batched way if needed
-        if self.use_drq and image_keys:
-            # Concatenate all images from state and next_state
+        # DRQ keys
+        image_keys = [k for k in self.states if self.use_drq and k.startswith(OBS_IMAGE)]
+        if image_keys:
             all_images = []
-            for key in image_keys:
-                all_images.append(batch_state[key])
-                all_images.append(batch_next_state[key])
+            for k in image_keys:
+                all_images += [batch_state[k], batch_next_state[k]]
+            imgs = torch.cat(all_images, dim=0)
+            aug  = self.image_augmentation_function(imgs)
+            for i, k in enumerate(image_keys):
+                batch_state[k]      = aug[i * 2 * batch_size : (i * 2 + 1) * batch_size]
+                batch_next_state[k] = aug[(i * 2 + 1) * batch_size : (i + 1) * 2 * batch_size]
 
-            # Optimization: Batch all images and apply augmentation once
-            all_images_tensor = torch.cat(all_images, dim=0)
-            augmented_images = self.image_augmentation_function(all_images_tensor)
-
-            # Split the augmented images back to their sources
-            for i, key in enumerate(image_keys):
-                # Calculate offsets for the current image key:
-                # For each key, we have 2*batch_size images (batch_size for states, batch_size for next_states)
-                # States start at index i*2*batch_size and take up batch_size slots
-                batch_state[key] = augmented_images[i * 2 * batch_size : (i * 2 + 1) * batch_size]
-                # Next states start after the states at index (i*2+1)*batch_size and also take up batch_size slots
-                batch_next_state[key] = augmented_images[(i * 2 + 1) * batch_size : (i + 1) * 2 * batch_size]
-
-        # Sample other tensors
-        batch_actions = []
-        batch_rewards = []
-        batch_dones = []
-        batch_truncateds = []
-
-        for env_idx, env_idx_tensor in env_indices:
-            # Convert random indices to actual buffer positions
-            actual_indices = (self.position[env_idx] - self.size[env_idx] + env_idx_tensor) % self.capacity
-            
-            batch_actions.append(self.actions[env_idx][actual_indices].to(self.device))
-            batch_rewards.append(self.rewards[env_idx][actual_indices].to(self.device))
-            batch_dones.append(self.dones[env_idx][actual_indices].to(self.device).float())
-            batch_truncateds.append(self.truncateds[env_idx][actual_indices].to(self.device).float())
-
-        batch_actions = torch.cat(batch_actions, dim=0)
-        batch_rewards = torch.cat(batch_rewards, dim=0)
-        batch_dones = torch.cat(batch_dones, dim=0)
-        batch_truncateds = torch.cat(batch_truncateds, dim=0)
-
-        # Sample complementary_info if available
-        batch_complementary_info = None
+        # complementary_info
+        batch_compl = None
         if self.has_complementary_info:
-            batch_complementary_info = {}
-            for key in self.complementary_info_keys:
-                batch_complementary_info[key] = []
-                for env_idx, env_idx_tensor in env_indices:
-                    # Convert random indices to actual buffer positions
-                    actual_indices = (self.position[env_idx] - self.size[env_idx] + env_idx_tensor) % self.capacity
-                    batch_complementary_info[key].append(self.complementary_info[key][env_idx][actual_indices].to(self.device))
-                batch_complementary_info[key] = torch.cat(batch_complementary_info[key], dim=0)
+            batch_compl = {k: self.complementary_info[k][env, actual].to(self.device)
+                        for k in self.complementary_info_keys}
+        
+        if batch_state['observation.state'].abs().max() > 1e5 or batch_next_state['observation.state'].abs().max() > 1e5 or \
+           torch.isnan(batch_state['observation.state']).any() or torch.isnan(batch_next_state['observation.state']).any() \
+            or batch_actions.abs().max() > 1e5 or torch.isnan(batch_actions).any():
+            def find_index(a):
+                a = a.abs()
+                flat_index = torch.argmax(a.flatten())
+                row, _ = torch.unravel_index(flat_index, a.shape)
+                row=env[row].item()
+                col=actual[row].item()
+                return row, col
+                
+            print(batch_state['observation.state'].max(), batch_next_state['observation.state'].max())
 
         return BatchTransition(
             state=batch_state,
@@ -388,7 +353,7 @@ class ParallelReplayBuffer:
             next_state=batch_next_state,
             done=batch_dones,
             truncated=batch_truncateds,
-            complementary_info=batch_complementary_info,
+            complementary_info=batch_compl,
         )
 
     def get_iterator(
