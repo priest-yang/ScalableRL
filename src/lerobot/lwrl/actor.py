@@ -290,6 +290,7 @@ def act_with_policy(
     episode_total_steps = 0
     # for multi-env using running average reward
     reward_running_buffer = deque(maxlen=100)
+    success_running_buffer = deque(maxlen=100)
 
     policy_timer = TimerManager("Policy inference", log=False)
 
@@ -355,6 +356,13 @@ def act_with_policy(
         episode_total_steps += 1
         # for multi_env
         reward_running_buffer.append(reward.mean())
+        # insert 0 / 1 to success_running_buffer
+        num_success = info.get('is_success', torch.zeros_like(done, device=device, dtype=torch.bool)).sum().item()
+        num_failure = torch.logical_or(done, truncated).sum().item() - num_success
+        for _ in range(num_success):
+            success_running_buffer.append(1)
+        for _ in range(num_failure):
+            success_running_buffer.append(0)
 
         #! Handle IsaacSim Lwlab Last timestamp Bug, the env will be automatically reset
         #! so need to manually replace next_obs with info['final_obs']
@@ -422,7 +430,8 @@ def act_with_policy(
                 python_object_to_bytes(
                     {
                         "Interaction step": interaction_step,
-                        "Running average reward": float(sum(reward_running_buffer) / len(reward_running_buffer)),
+                        "Running average reward": float(sum(reward_running_buffer) / (len(reward_running_buffer) + 1e-10)),
+                        "Success rate": float(sum(success_running_buffer) / (len(success_running_buffer) + 1e-10)),
                         **stats,
                     }
                 )
