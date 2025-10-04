@@ -74,6 +74,8 @@ class PolicyConfig:
     std_min: float = 1e-5
     std_max: float = 10.0
     init_final: float = 0.05
+    action_low_bound: list[float] = field(default_factory=lambda: None)
+    action_high_bound: list[float] = field(default_factory=lambda: None)
 
 
 @PreTrainedConfig.register_subclass("sac")

@@ -336,13 +336,7 @@ class ParallelReplayBuffer:
         if batch_state['observation.state'].abs().max() > 1e5 or batch_next_state['observation.state'].abs().max() > 1e5 or \
            torch.isnan(batch_state['observation.state']).any() or torch.isnan(batch_next_state['observation.state']).any() \
             or batch_actions.abs().max() > 1e5 or torch.isnan(batch_actions).any():
-            def find_index(a):
-                a = a.abs()
-                flat_index = torch.argmax(a.flatten())
-                row, _ = torch.unravel_index(flat_index, a.shape)
-                row=env[row].item()
-                col=actual[row].item()
-                return row, col
+            # import ipdb; ipdb.set_trace()
                 
             print(batch_state['observation.state'].max(), batch_next_state['observation.state'].max())
 
