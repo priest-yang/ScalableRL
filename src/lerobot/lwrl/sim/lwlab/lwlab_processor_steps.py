@@ -147,6 +147,8 @@ class RepackLwlabObservationProcessorStep(ObservationProcessorStep):
             env_state_parts = []
             for key in self.ENV_STATE_KEYS:
                 if key in policy_obs:
+                    # fill nan with 0
+                    policy_obs[key] = torch.where(torch.isnan(policy_obs[key]), torch.randn_like(policy_obs[key]), policy_obs[key])
                     env_state_parts.append(policy_obs[key])
             if env_state_parts:
                 env_state = torch.concat(env_state_parts, dim=1)
@@ -157,6 +159,8 @@ class RepackLwlabObservationProcessorStep(ObservationProcessorStep):
             obs_state_parts = []
             for key in self.OBS_STATE_KEYS:
                 if key in policy_obs:
+                    # fill nan with 0
+                    policy_obs[key] = torch.where(torch.isnan(policy_obs[key]), torch.randn_like(policy_obs[key]), policy_obs[key])
                     obs_state_parts.append(policy_obs[key])
             if obs_state_parts:
                 obs_state = torch.concat(obs_state_parts, dim=1)
