@@ -26,7 +26,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
-from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution
+from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution, constraints
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig, is_image_feature
@@ -103,7 +103,7 @@ class SACPolicy(
         actions: Tensor,
         use_target: bool = False,
         observation_features: Tensor | None = None,
-    ) -> Tensor:
+    ) -> tuple[Tensor, Tensor, Tensor]:
         """Forward pass through a critic network ensemble
 
         Args:
@@ -112,16 +112,21 @@ class SACPolicy(
             use_target: If True, use target critics, otherwise use ensemble critics
 
         Returns:
-            Tensor of Q-values from all critics
+            Tuple of (q_values, q_mean, q_std) where:
+            - q_values: Tensor of Q-values from all critics
+            - q_mean: Mean Q-value across critics
+            - q_std: Standard deviation of Q-values across critics
         """
 
         critics = self.critic_target if use_target else self.critic_ensemble
         q_values = critics(observations, actions, observation_features)
-        return q_values
+        q_mean = q_values.mean(dim=-1)
+        q_std = q_values.std(dim=-1)
+        return q_values, q_mean, q_std
 
     def discrete_critic_forward(
         self, observations, use_target=False, observation_features=None
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Forward pass through a discrete critic network
 
         Args:
@@ -130,11 +135,16 @@ class SACPolicy(
             observation_features: Optional pre-computed observation features to avoid recomputing encoder output
 
         Returns:
-            Tensor of Q-values from the discrete critic network
+            Tuple of (q_values, q_mean, q_std) where:
+            - q_values: Tensor of Q-values from the discrete critic network
+            - q_mean: Mean Q-value across actions
+            - q_std: Standard deviation of Q-values across actions
         """
         discrete_critic = self.discrete_critic_target if use_target else self.discrete_critic
         q_values = discrete_critic(observations, observation_features)
-        return q_values
+        q_mean = q_values.mean(dim=-1)
+        q_std = q_values.std(dim=-1)
+        return q_values, q_mean, q_std
 
     def forward(
         self,
@@ -169,7 +179,7 @@ class SACPolicy(
             done: Tensor = batch["done"]
             next_observation_features: Tensor = batch.get("next_observation_feature")
 
-            loss_critic = self.compute_loss_critic(
+            loss_critic, q_info = self.compute_loss_critic(
                 observations=observations,
                 actions=actions,
                 rewards=rewards,
@@ -177,9 +187,10 @@ class SACPolicy(
                 done=done,
                 observation_features=observation_features,
                 next_observation_features=next_observation_features,
+                return_q_info=True,
             )
 
-            return {"loss_critic": loss_critic}
+            return {"loss_critic": loss_critic, "q_info": q_info}
 
         if model == "discrete_critic" and self.config.num_discrete_actions is not None:
             # Extract critic-specific components
@@ -188,7 +199,7 @@ class SACPolicy(
             done: Tensor = batch["done"]
             next_observation_features: Tensor = batch.get("next_observation_feature")
             complementary_info = batch.get("complementary_info")
-            loss_discrete_critic = self.compute_loss_discrete_critic(
+            loss_discrete_critic, q_info = self.compute_loss_discrete_critic(
                 observations=observations,
                 actions=actions,
                 rewards=rewards,
@@ -197,8 +208,9 @@ class SACPolicy(
                 observation_features=observation_features,
                 next_observation_features=next_observation_features,
                 complementary_info=complementary_info,
+                return_q_info=True,
             )
-            return {"loss_discrete_critic": loss_discrete_critic}
+            return {"loss_discrete_critic": loss_discrete_critic, "q_info": q_info}
         if model == "actor":
             return {
                 "loss_actor": self.compute_loss_actor(
@@ -251,12 +263,13 @@ class SACPolicy(
         done,
         observation_features: Tensor | None = None,
         next_observation_features: Tensor | None = None,
+        return_q_info: bool = False,
     ) -> Tensor:
         with torch.no_grad():
             next_action_preds, next_log_probs, _ = self.actor(next_observations, next_observation_features)
 
             # 2- compute q targets
-            q_targets = self.critic_forward(
+            q_targets, q_targets_mean, q_targets_std = self.critic_forward(
                 observations=next_observations,
                 actions=next_action_preds,
                 use_target=True,
@@ -283,7 +296,7 @@ class SACPolicy(
             # In the buffer we have the full action space (continuous + discrete)
             # We need to split them before concatenating them in the critic forward
             actions: Tensor = actions[:, :DISCRETE_DIMENSION_INDEX]
-        q_preds = self.critic_forward(
+        q_preds, q_preds_mean, q_preds_std = self.critic_forward(
             observations=observations,
             actions=actions,
             use_target=False,
@@ -301,6 +314,14 @@ class SACPolicy(
                 reduction="none",
             ).mean(dim=1)
         ).sum()
+        if return_q_info:
+            q_info = {}
+            for i in range(q_preds.shape[0]):
+                q_info[f"critic/q{i}_preds_mean"] = q_preds_mean[i].item()
+                q_info[f"critic/q{i}_preds_std"] = q_preds_std[i].item()
+                q_info[f"critic/q{i}_targets_mean"] = q_targets_mean[i].item()
+                q_info[f"critic/q{i}_targets_std"] = q_targets_std[i].item()
+            return critics_loss, q_info
         return critics_loss
 
     def compute_loss_discrete_critic(
@@ -313,6 +334,7 @@ class SACPolicy(
         observation_features=None,
         next_observation_features=None,
         complementary_info=None,
+        return_q_info: bool = False,
     ):
         # NOTE: We only want to keep the discrete action part
         # In the buffer we have the full action space (continuous + discrete)
@@ -327,13 +349,13 @@ class SACPolicy(
 
         with torch.no_grad():
             # For DQN, select actions using online network, evaluate with target network
-            next_discrete_qs = self.discrete_critic_forward(
+            next_discrete_qs, next_discrete_qs_mean, next_discrete_qs_std = self.discrete_critic_forward(
                 next_observations, use_target=False, observation_features=next_observation_features
             )
             best_next_discrete_action = torch.argmax(next_discrete_qs, dim=-1, keepdim=True)
 
             # Get target Q-values from target network
-            target_next_discrete_qs = self.discrete_critic_forward(
+            target_next_discrete_qs, target_next_discrete_qs_mean, target_next_discrete_qs_std = self.discrete_critic_forward(
                 observations=next_observations,
                 use_target=True,
                 observation_features=next_observation_features,
@@ -351,7 +373,7 @@ class SACPolicy(
             target_discrete_q = rewards_discrete + (1 - done) * self.config.discount * target_next_discrete_q
 
         # Get predicted Q-values for current observations
-        predicted_discrete_qs = self.discrete_critic_forward(
+        predicted_discrete_qs, predicted_discrete_qs_mean, predicted_discrete_qs_std = self.discrete_critic_forward(
             observations=observations, use_target=False, observation_features=observation_features
         )
 
@@ -360,6 +382,15 @@ class SACPolicy(
 
         # Compute MSE loss between predicted and target Q-values
         discrete_critic_loss = F.mse_loss(input=predicted_discrete_q, target=target_discrete_q)
+        
+        if return_q_info:
+            q_info = {}
+            for i in range(predicted_discrete_qs.shape[0]):
+                q_info[f"critic/discrete_q{i}_preds_mean"] = predicted_discrete_qs_mean[i].item()
+                q_info[f"critic/discrete_q{i}_preds_std"] = predicted_discrete_qs_std[i].item()
+                q_info[f"critic/discrete_q{i}_targets_mean"] = target_next_discrete_qs_mean[i].item()
+                q_info[f"critic/discrete_q{i}_targets_std"] = target_next_discrete_qs_std[i].item()
+            return discrete_critic_loss, q_info
         return discrete_critic_loss
 
     def compute_loss_temperature(self, observations, observation_features: Tensor | None = None) -> Tensor:
@@ -377,7 +408,7 @@ class SACPolicy(
     ) -> Tensor:
         actions_pi, log_probs, _ = self.actor(observations, observation_features)
 
-        q_preds = self.critic_forward(
+        q_preds, q_preds_mean, q_preds_std = self.critic_forward(
             observations=observations,
             actions=actions_pi,
             use_target=False,
@@ -807,6 +838,8 @@ class Policy(nn.Module):
         init_final: float | None = None,
         use_tanh_squash: bool = False,
         encoder_is_shared: bool = False,
+        action_low_bound: list[float] = None,
+        action_high_bound: list[float] = None,
     ):
         super().__init__()
         self.encoder: SACObservationEncoder = encoder
@@ -817,6 +850,8 @@ class Policy(nn.Module):
         self.fixed_std = fixed_std
         self.use_tanh_squash = use_tanh_squash
         self.encoder_is_shared = encoder_is_shared
+        self.action_low_bound = action_low_bound
+        self.action_high_bound = action_high_bound
 
         # Find the last Linear layer's output dimension
         for layer in reversed(network.net):
@@ -862,7 +897,7 @@ class Policy(nn.Module):
             std = self.fixed_std.expand_as(means)
 
         # Build transformed distribution
-        dist = TanhMultivariateNormalDiag(loc=means, scale_diag=std)
+        dist = TanhMultivariateNormalDiag(loc=means, scale_diag=std, low=self.action_low_bound, high=self.action_high_bound)
 
         # Sample actions (reparameterized)
         actions = dist.rsample()
@@ -1008,6 +1043,11 @@ class RescaleFromTanh(Transform):
         self.low = low
 
         self.high = high
+        
+        # Required attributes for PyTorch Transform
+        self.domain = constraints.interval(-1.0, 1.0)
+        self.codomain = constraints.interval(low, high)
+        self.bijective = True
 
     def _call(self, x):
         # Rescale from (-1, 1) to (low, high)
@@ -1034,11 +1074,11 @@ class TanhMultivariateNormalDiag(TransformedDistribution):
         transforms = [TanhTransform(cache_size=1)]
 
         if low is not None and high is not None:
-            low = torch.as_tensor(low)
+            low = torch.as_tensor(low, device=loc.device)
 
-            high = torch.as_tensor(high)
+            high = torch.as_tensor(high, device=loc.device)
 
-            transforms.insert(0, RescaleFromTanh(low, high))
+            transforms.append(RescaleFromTanh(low, high))
 
         super().__init__(base_dist, transforms)
 
