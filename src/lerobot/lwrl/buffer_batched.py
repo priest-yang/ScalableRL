@@ -88,6 +88,8 @@ class ParallelReplayBuffer:
         use_drq: bool = True,
         storage_device: str = "cpu",
         optimize_memory: bool = False,
+        gamma: float = 0.99,
+        n_steps: int = 1,
     ):
         """
         Parallel replay buffer for storing transitions from multiple environments.
@@ -124,6 +126,8 @@ class ParallelReplayBuffer:
         self.size = torch.zeros(num_envs, dtype=torch.long, device=storage_device)
         self.initialized = False
         self.optimize_memory = optimize_memory
+        self.gamma = gamma
+        self.n_steps = n_steps
 
         # Track episode boundaries for memory optimization: (num_envs, capacity)
         self.episode_ends = torch.zeros((num_envs, capacity), dtype=torch.bool, device=storage_device)
@@ -256,7 +260,11 @@ class ParallelReplayBuffer:
 
     def sample(self, batch_size: int) -> BatchTransition:
         """
-        Sample a random batch of transitions from all environments uniformly.
+        Sample uniformly over envs and indices, compute n-step returns with early stopping
+        at episode end or the unfilled boundary (next write slot). For the boundary case,
+        we return the last valid observation (s_{t+k-1}) and mark truncated.
+
+        When self.n_steps == 1, this reduces to the original single-step semantics.
         """
         if not self.initialized:
             raise RuntimeError("Cannot sample from an empty buffer.")
@@ -265,57 +273,85 @@ class ParallelReplayBuffer:
             raise RuntimeError("Cannot sample from an empty buffer.")
         batch_size = min(batch_size, total)
 
-        sizes = self.size.to(self.storage_device)        # [E]
-        pos   = self.position.to(self.storage_device)    # [E]
-        cum   = torch.zeros(self.num_envs + 1, device=self.storage_device, dtype=torch.long)
+        # Snapshot to avoid races with add()
+        sizes = self.size.to(self.storage_device)     # [E]
+        pos   = self.position.to(self.storage_device) # [E]
+
+        # Global -> (env, idx_in_env)
+        cum = torch.zeros(self.num_envs + 1, device=self.storage_device, dtype=torch.long)
         cum[1:] = torch.cumsum(sizes, dim=0)
 
         gidx = torch.randint(0, cum[-1].item(), (batch_size,), device=self.storage_device)
-        env  = torch.bucketize(gidx, cum[1:], right=True)           # [B], values in [0,E-1]
-        idx_in_env = gidx - cum[env]                    # [B] in [0, sizes[env]-1]
-
-        # safety check (keep during development)
+        env  = torch.bucketize(gidx, cum[1:], right=True)              # [B] in [0,E-1]
+        idx_in_env = gidx - cum[env]                                   # [B] in [0, sizes[env]-1]
         assert torch.all((idx_in_env >= 0) & (idx_in_env < sizes[env])), "Index escaped env range"
 
-        # convert to ring-buffer absolute positions
-        actual = (pos[env] - sizes[env] + idx_in_env) % self.capacity  # [B]
+        # Absolute ring indices
+        t = (pos[env] - sizes[env] + idx_in_env) % self.capacity       # [B]
 
-        # next indices (optimize_memory path)
-        if self.optimize_memory:
-            # avoid crossing unfilled region: if sizes[env] < capacity and idx_in_env == sizes[env]-1
-            last_mask = (sizes[env] < self.capacity) & (idx_in_env == sizes[env] - 1)
-            next_actual = (actual + 1) % self.capacity
-            # terminals should not advance
-            term_mask = (self.dones[env, actual] | self.truncateds[env, actual])
-            use_same = last_mask | term_mask
-        else:
-            next_actual = actual
-            use_same = torch.zeros_like(actual, dtype=torch.bool, device=self.storage_device)
+        # ----- n-step planning (no crossing unfilled region) -----
+        n = int(getattr(self, "n_steps", 1))
+        gamma = float(getattr(self, "gamma", 0.99))
 
-        use_same = use_same.to(self.device)
-        
-        # gather states
+        # Max available transitions before reaching pos[env] (exclusive)
+        avail_len = sizes[env] - idx_in_env                             # [B], >=1
+        max_steps = torch.minimum(torch.full_like(avail_len, n), avail_len)  # [B] in [1,n]
+
+        steps = torch.arange(n, device=self.storage_device)             # [n]
+        seq_idx = (t.unsqueeze(1) + steps.unsqueeze(0)) % self.capacity # [B, n]
+        valid_mask = steps.unsqueeze(0) < max_steps.unsqueeze(1)        # [B, n]
+
+        # Episode termination
+        term = (self.dones[env.unsqueeze(1), seq_idx] |
+                self.truncateds[env.unsqueeze(1), seq_idx]) & valid_mask  # [B, n]
+
+        big = (n + 1)
+        idx_grid = steps.unsqueeze(0).expand_as(term)                   # [B, n]
+        masked = torch.where(term, idx_grid, torch.full_like(idx_grid, big))
+        first_term = masked.min(dim=1).values                           # [B], big if none
+        any_term = first_term < big
+        last_idx = torch.where(any_term, first_term, (max_steps - 1))   # [B] in [0, n-1]
+        used_steps = last_idx + 1                                       # [B] in [1, n]
+
+        # ----- rewards: sum_{i=0}^{used_steps-1} gamma^i r_{t+i} -----
+        rewards_seq = self.rewards[env.unsqueeze(1), seq_idx].to(self.device)          # [B, n]
+        disc_vec = (gamma ** steps.float()).to(self.device)                             # [n]
+        use_mask = (idx_grid.to(self.device) <= last_idx.to(self.device).unsqueeze(1)) # [B, n]
+        nstep_rewards = (rewards_seq * disc_vec.unsqueeze(0) * use_mask.float()).sum(dim=1)  # [B]
+
+        # ----- next_state index: s_{t+used_steps}, BUT never read pos (unfilled boundary) -----
+        # If sizes[env] < capacity and (t + used_steps) % cap == pos[env], we must NOT read pos.
+        next_idx_raw = (t + used_steps) % self.capacity                               # [B]
+        boundary_mask = (sizes[env] < self.capacity) & (next_idx_raw == pos[env])     # [B]
+
+        # Fallback next index: last valid state (s_{t+used_steps-1})
+        last_tr_idx = (t + last_idx) % self.capacity                                  # [B]
+        next_idx = torch.where(boundary_mask, last_tr_idx, next_idx_raw)              # [B]
+
+        # ----- states -----
         batch_state, batch_next_state = {}, {}
         for k in self.states:
-            s = self.states[k][env, actual].to(self.device)
-            if self.optimize_memory:
-                s_next_raw = self.states[k][env, next_actual].to(self.device)
-                s_next = torch.where(
-                    use_same.view(-1, *([1] * (s.ndim - 1))), s, s_next_raw
-                )
-            else:
-                s_next = self.next_states[k][env, actual].to(self.device)
-
+            s = self.states[k][env, t].to(self.device)
+            s_next = self.states[k][env, next_idx].to(self.device)
             batch_state[k] = s
             batch_next_state[k] = s_next
 
-        # actions, rewards, dones, truncateds
-        batch_actions    = self.actions[env, actual].to(self.device)
-        batch_rewards    = self.rewards[env, actual].to(self.device)
-        batch_dones      = self.dones[env, actual].to(self.device).float()
-        batch_truncateds = self.truncateds[env, actual].to(self.device).float()
+        # ----- actions & flags -----
+        batch_actions = self.actions[env, t].to(self.device)
 
-        # DRQ keys
+        # done/truncated taken at the last USED transition
+        done_last      = self.dones[env, last_tr_idx].to(self.device).float()
+        truncated_last = self.truncateds[env, last_tr_idx].to(self.device).float()
+
+        # If we hit the unfilled boundary, treat as a timeout-like truncation
+        # (mimics SB3 behavior of temporarily flagging the pos-1 step).
+        if boundary_mask.any():
+            bm = boundary_mask.to(self.device).float()
+            truncated_last = torch.where(bm > 0, torch.ones_like(truncated_last), truncated_last)
+            # In case some environments also had 'done' at the last step, keep 'done' as-is.
+            # (No extra change needed for rewards; we already stopped at last_idx.)
+
+        # ----- DrQ augmentation for image keys -----
         image_keys = [k for k in self.states if self.use_drq and k.startswith(OBS_IMAGE)]
         if image_keys:
             all_images = []
@@ -327,26 +363,30 @@ class ParallelReplayBuffer:
                 batch_state[k]      = aug[i * 2 * batch_size : (i * 2 + 1) * batch_size]
                 batch_next_state[k] = aug[(i * 2 + 1) * batch_size : (i + 1) * 2 * batch_size]
 
-        # complementary_info
+        # ----- complementary_info -----
         batch_compl = None
         if self.has_complementary_info:
-            batch_compl = {k: self.complementary_info[k][env, actual].to(self.device)
-                        for k in self.complementary_info_keys}
-        
-        if batch_state['observation.state'].abs().max() > 1e5 or batch_next_state['observation.state'].abs().max() > 1e5 or \
-           torch.isnan(batch_state['observation.state']).any() or torch.isnan(batch_next_state['observation.state']).any() \
-            or batch_actions.abs().max() > 1e5 or torch.isnan(batch_actions).any():
-            # import ipdb; ipdb.set_trace()
-                
-            print(batch_state['observation.state'].max(), batch_next_state['observation.state'].max())
+            batch_compl = {
+                k: self.complementary_info[k][env, t].to(self.device)
+                for k in self.complementary_info_keys
+            }
+
+        # ----- sanity checks -----
+        if (batch_state['observation.state'].abs().max() > 1e5 or
+            batch_next_state['observation.state'].abs().max() > 1e5 or
+            torch.isnan(batch_state['observation.state']).any() or
+            torch.isnan(batch_next_state['observation.state']).any() or
+            batch_actions.abs().max() > 1e5 or torch.isnan(batch_actions).any()):
+            import ipdb; ipdb.set_trace()
+            raise ValueError("NaN/Inf detected in batch")
 
         return BatchTransition(
             state=batch_state,
             action=batch_actions,
-            reward=batch_rewards,
-            next_state=batch_next_state,
-            done=batch_dones,
-            truncated=batch_truncateds,
+            reward=nstep_rewards,             # [B] n-step return
+            next_state=batch_next_state,      # s_{t+used_steps} or s_{t+used_steps-1} if boundary
+            done=done_last,                   # flags at last used transition
+            truncated=truncated_last,
             complementary_info=batch_compl,
         )
 

@@ -199,6 +199,9 @@ class SACConfig(PreTrainedConfig):
     # Optimizations
     use_torch_compile: bool = True
 
+    # Buffer
+    n_steps: int = 1 # n-step returns
+
     def __post_init__(self):
         super().__post_init__()
         # Any validation specific to SAC configuration

@@ -51,6 +51,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from pprint import pformat
+from tqdm import tqdm
 
 import grpc
 import torch
@@ -351,6 +352,7 @@ def add_actor_information_and_train(
     online_iterator = None
     offline_iterator = None
 
+    progress_bar = tqdm(total=cfg.steps, desc="Training")
     # NOTE: THIS IS THE MAIN LOOP OF THE LEARNER
     while True:
         # Exit the training loop if shutdown is requested
@@ -488,9 +490,9 @@ def add_actor_information_and_train(
 
         # TODO (sz): Debug this, find out why loss_critic is NaN
         if loss_critic.isnan():
-            logging.error("Loss critic is NaN, skipping")
+            policy.forward(forward_batch, model="critic")
             # import ipdb; ipdb.set_trace()
-            loss_critic = loss_critic * 0.0
+            raise ValueError("Loss critic is NaN")
 
         optimizers["critic"].zero_grad()
         loss_critic.backward()
@@ -593,7 +595,8 @@ def add_actor_information_and_train(
 
         optimization_step += 1
         if optimization_step % log_freq == 0:
-            logging.info(f"[LEARNER] Number of optimization step: {optimization_step}")
+            progress_bar.update(log_freq)
+            progress_bar.set_postfix(frequency=frequency_for_one_optimization_step)
 
         # Save checkpoint at specified intervals
         if saving_checkpoint and (optimization_step % save_freq == 0 or optimization_step == online_steps):
@@ -974,6 +977,8 @@ def initialize_replay_buffer(
                 state_keys=cfg.policy.input_features.keys(),
                 optimize_memory=True,
                 num_envs=cfg.env.num_envs,
+                gamma=cfg.policy.discount,
+                n_steps=cfg.policy.n_steps,
             )
         except Exception as e:
             logging.error(f"Failed to load dataset: {e}")
@@ -986,6 +991,8 @@ def initialize_replay_buffer(
         storage_device=storage_device,
         optimize_memory=True,
         num_envs=cfg.env.num_envs,
+        gamma=cfg.policy.discount,
+        n_steps=cfg.policy.n_steps,
     )
     
 
