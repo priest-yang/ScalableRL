@@ -64,7 +64,7 @@ class LearnerService(services_pb2_grpc.LearnerServiceServicer):
                 # and it's checked in the while loop
                 continue
 
-            logging.info("[LEARNER] Push parameters to the Actor")
+            # logging.info("[LEARNER] Push parameters to the Actor")
             buffer = get_last_item_from_queue(
                 self.parameters_queue, block=True, timeout=self.queue_get_timeout
             )
@@ -80,7 +80,7 @@ class LearnerService(services_pb2_grpc.LearnerServiceServicer):
             )
 
             last_push_time = time.time()
-            logging.info("[LEARNER] Parameters sent")
+            # logging.info("[LEARNER] Parameters sent")
 
         logging.info("[LEARNER] Stream parameters finished")
         return services_pb2.Empty()
