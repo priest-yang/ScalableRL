@@ -315,6 +315,8 @@ def act_with_policy(
             with policy_timer:
                 # Extract observation from transition for policy
                 action = policy.select_action(batch=observation)
+                if action.isnan().any():
+                    raise ValueError("Action is NaN")
             policy_fps = policy_timer.fps_last
 
             log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
