@@ -353,6 +353,8 @@ def add_actor_information_and_train(
     offline_iterator = None
 
     progress_bar = tqdm(total=cfg.steps, desc="Training")
+    progress_bar.update(resume_optimization_step)
+    
     # NOTE: THIS IS THE MAIN LOOP OF THE LEARNER
     while True:
         # Exit the training loop if shutdown is requested
@@ -529,7 +531,7 @@ def add_actor_information_and_train(
             for _ in range(policy_update_freq):
                 # Actor optimization
                 actor_output = policy.forward(forward_batch, model="actor")
-                loss_actor = actor_output["loss_actor"]
+                loss_actor = actor_output["loss_actor"] * 0.0
                 optimizers["actor"].zero_grad()
                 loss_actor.backward()
                 actor_grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -596,7 +598,6 @@ def add_actor_information_and_train(
         optimization_step += 1
         if optimization_step % log_freq == 0:
             progress_bar.update(log_freq)
-            progress_bar.set_postfix(frequency=frequency_for_one_optimization_step)
 
         # Save checkpoint at specified intervals
         if saving_checkpoint and (optimization_step % save_freq == 0 or optimization_step == online_steps):
