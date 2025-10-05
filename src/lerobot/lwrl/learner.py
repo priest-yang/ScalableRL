@@ -353,7 +353,8 @@ def add_actor_information_and_train(
     offline_iterator = None
 
     progress_bar = tqdm(total=cfg.steps, desc="Training")
-    progress_bar.update(resume_optimization_step)
+    if resume_optimization_step is not None:
+        progress_bar.update(resume_optimization_step)
     
     # NOTE: THIS IS THE MAIN LOOP OF THE LEARNER
     while True:
@@ -531,7 +532,7 @@ def add_actor_information_and_train(
             for _ in range(policy_update_freq):
                 # Actor optimization
                 actor_output = policy.forward(forward_batch, model="actor")
-                loss_actor = actor_output["loss_actor"] * 0.0
+                loss_actor = actor_output["loss_actor"]
                 optimizers["actor"].zero_grad()
                 loss_actor.backward()
                 actor_grad_norm = torch.nn.utils.clip_grad_norm_(
