@@ -488,7 +488,8 @@ def add_actor_information_and_train(
 
         # TODO (sz): Debug this, find out why loss_critic is NaN
         if loss_critic.isnan():
-            print("Warning: loss_critic is NaN, skipping")
+            logging.error("Loss critic is NaN, skipping")
+            # import ipdb; ipdb.set_trace()
             loss_critic = loss_critic * 0.0
 
         optimizers["critic"].zero_grad()
@@ -527,7 +528,6 @@ def add_actor_information_and_train(
                 # Actor optimization
                 actor_output = policy.forward(forward_batch, model="actor")
                 loss_actor = actor_output["loss_actor"]
-                print(f"Loss actor: {loss_actor.item()}, Loss critic: {loss_critic.item()}")
                 optimizers["actor"].zero_grad()
                 loss_actor.backward()
                 actor_grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -579,8 +579,6 @@ def add_actor_information_and_train(
         # Calculate and log optimization frequency
         time_for_one_optimization_step = time.time() - time_for_one_optimization_step
         frequency_for_one_optimization_step = 1 / (time_for_one_optimization_step + 1e-9)
-
-        logging.info(f"[LEARNER] Optimization frequency loop [Hz]: {frequency_for_one_optimization_step}")
 
         # Log optimization frequency
         if wandb_logger:
@@ -860,6 +858,7 @@ def handle_resume_logic(cfg: TrainRLServerPipelineConfig) -> TrainRLServerPipeli
         return cfg
 
     # Case 2: Resuming training
+    out_dir = cfg.resume_from_output_dir
     checkpoint_dir = os.path.join(out_dir, CHECKPOINTS_DIR, LAST_CHECKPOINT_LINK)
     if not os.path.exists(checkpoint_dir):
         raise RuntimeError(f"No model checkpoint found in {checkpoint_dir} for resume=True")
@@ -955,34 +954,40 @@ def initialize_replay_buffer(
     Returns:
         ReplayBuffer: Initialized replay buffer
     """
-    if not cfg.resume:
-        return ParallelReplayBuffer(
-            capacity=cfg.policy.online_buffer_capacity,
-            device=device,
-            state_keys=cfg.policy.input_features.keys(),
-            storage_device=storage_device,
-            optimize_memory=True,
-            num_envs=cfg.env.num_envs,
-        )
+    # try to load (sometimes we don't save dataset to save space)
+    if cfg.resume:
+        logging.info("Resume training load the online dataset")
+        dataset_path = os.path.join(cfg.output_dir, "dataset")
+        try:
+            # NOTE: In RL is possible to not have a dataset.
+            repo_id = None
+            if cfg.dataset is not None:
+                repo_id = cfg.dataset.repo_id
+            dataset = LeRobotDataset(
+                repo_id=repo_id,
+                root=dataset_path,
+            )
+            return ParallelReplayBuffer.from_lerobot_dataset(
+                lerobot_dataset=dataset,
+                capacity=cfg.policy.online_buffer_capacity,
+                device=device,
+                state_keys=cfg.policy.input_features.keys(),
+                optimize_memory=True,
+                num_envs=cfg.env.num_envs,
+            )
+        except Exception as e:
+            logging.error(f"Failed to load dataset: {e}")
+            logging.info("Continue training with empty buffer")
 
-    logging.info("Resume training load the online dataset")
-    dataset_path = os.path.join(cfg.output_dir, "dataset")
-
-    # NOTE: In RL is possible to not have a dataset.
-    repo_id = None
-    if cfg.dataset is not None:
-        repo_id = cfg.dataset.repo_id
-    dataset = LeRobotDataset(
-        repo_id=repo_id,
-        root=dataset_path,
-    )
-    return ReplayBuffer.from_lerobot_dataset(
-        lerobot_dataset=dataset,
+    return ParallelReplayBuffer(
         capacity=cfg.policy.online_buffer_capacity,
         device=device,
         state_keys=cfg.policy.input_features.keys(),
+        storage_device=storage_device,
         optimize_memory=True,
+        num_envs=cfg.env.num_envs,
     )
+    
 
 
 def initialize_offline_replay_buffer(
@@ -1001,16 +1006,21 @@ def initialize_offline_replay_buffer(
     Returns:
         ReplayBuffer: Initialized offline replay buffer
     """
-    if not cfg.resume:
-        logging.info("make_dataset offline buffer")
-        offline_dataset = make_dataset(cfg)
-    else:
-        logging.info("load offline dataset")
-        dataset_offline_path = os.path.join(cfg.output_dir, "dataset_offline")
-        offline_dataset = LeRobotDataset(
-            repo_id=cfg.dataset.repo_id,
-            root=dataset_offline_path,
-        )
+    if cfg.resume:
+        try:
+            logging.info("load offline dataset")
+            dataset_offline_path = os.path.join(cfg.output_dir, "dataset_offline")
+            offline_dataset = LeRobotDataset(
+                repo_id=cfg.dataset.repo_id,
+                root=dataset_offline_path,
+            )
+        except Exception as e:
+            logging.error(f"Failed to load dataset: {e}")
+            logging.info("Continue training with specified offline buffer")
+
+    logging.info("make_dataset offline buffer")
+    offline_dataset = make_dataset(cfg)
+
 
     logging.info("Convert to a offline replay buffer")
     offline_replay_buffer = ReplayBuffer.from_lerobot_dataset(

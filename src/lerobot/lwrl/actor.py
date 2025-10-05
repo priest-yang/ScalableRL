@@ -178,6 +178,10 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
     interactions_process.start()
     receive_policy_process.start()
 
+    # overwrite the policy with resume=False
+    #! Lerobot from_pretrain take the same config_path arg with rl config, will cause error
+    cfg.policy.resume = False
+    cfg.policy.pretrained_path = None
     act_with_policy(
         cfg=cfg,
         shutdown_event=shutdown_event,
