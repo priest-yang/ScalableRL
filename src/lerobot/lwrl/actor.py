@@ -456,6 +456,26 @@ def act_with_policy(
             dt_time = time.perf_counter() - start_time
             busy_wait(1 / cfg.env.fps - dt_time)
 
+        # manually save the policy and checkpoint
+        # TODO: (sz) need to fix the saving issue in learner
+        if interaction_step % cfg.save_freq == 0:
+            import pickle
+            from lerobot.utils.train_utils import get_step_checkpoint_dir
+            from lerobot.utils.constants import PRETRAINED_MODEL_DIR
+            from pathlib import Path
+            
+            # save checkpoint only
+            checkpoint_dir = get_step_checkpoint_dir(Path(cfg.output_dir) / "actor", interaction_step, interaction_step)
+            pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
+            os.makedirs(pretrained_dir, exist_ok=True)
+            policy.save_pretrained(pretrained_dir)
+            cfg.save_pretrained(pretrained_dir)
+
+            # pickle the policy
+            with open(os.path.join(checkpoint_dir, f"policy_{interaction_step}.pkl"), "wb") as f:
+                pickle.dump(policy, f)
+            logging.info(f"[ACTOR] Saved policy and checkpoint at interaction step {interaction_step}")
+        
 
 #  Communication Functions - Group all gRPC/messaging functions
 
