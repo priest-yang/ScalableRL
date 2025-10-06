@@ -148,7 +148,7 @@ class DataCollector:
         """Setup buffer"""
         print("Setting up buffer...")
         self.buffer = ParallelReplayBuffer(
-            capacity=self.args.num_steps * 2,  # Extra capacity for safety
+            capacity=self.args.num_steps * self.env.num_envs * 2,  # Extra capacity for safety
             num_envs=self.env.num_envs,
             device=self.args.device,
             storage_device=self.args.storage_device
@@ -449,7 +449,7 @@ def parse_arguments():
                        help="Dataset root directory")
     
     # hilserl args (for obs processing)
-    parser.add_argument("--config_path", type=str, default="/home/johndoe/Documents/lerobot-hilserl/src/lerobot/configs/rl/hilserl_sim_lwlab_lerobot/train_lwlab_hil_lerobotPnP.json",
+    parser.add_argument("--config_path", type=str, default="/home/johndoe/Documents/lerobot-hilserl/src/lerobot/configs/rl/hilserl_sim_lwlab_lerobot/train_lwlab_hil_lerobotPnP_w_data.json",
                        help="Hilserl arguments", required=True)
     
     return parser.parse_args()
