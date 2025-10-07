@@ -169,7 +169,6 @@ def plot_3d_trajectory(trajs, q_min=Q_MIN, q_max=Q_MAX, elev=ELEV, azim=AZIM, ro
     Returns: RGB numpy array for this frame (H, W, 3), dtype=uint8
     """
     import matplotlib
-    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
     from mpl_toolkits.mplot3d.art3d import Line3DCollection
@@ -243,6 +242,8 @@ def plot_3d_trajectory(trajs, q_min=Q_MIN, q_max=Q_MAX, elev=ELEV, azim=AZIM, ro
     w, h = fig.canvas.get_width_height()
     img = fig_to_rgb(fig)
     img = img.reshape(h, w, 3).copy()
+    # clear the figure
+    fig.clear()
     plt.close(fig)
     return img
 
@@ -350,3 +351,16 @@ if __name__ == "__main__":
         main(cfg, viz_args)
 
     _entry()
+
+
+"""
+sample usage:
+python visualization.py \
+    --model_dir /home/johndoe/Documents/lerobot-hilserl/outputs/train/2025-10-06/02-16-15_lwlab_lerobot_pickup_100env_nsteps3_130episodes/actor/checkpoints/ \
+    --dataset_root /home/johndoe/Documents/lerobot-hilserl/datasets/lerobot_lift_viz \
+    --output_dir /home/johndoe/Documents/lerobot-hilserl/outputs/ \
+    --n_trajectories 50 \
+    --downsample_rate 2 \
+    --fps 1 \
+    --debug
+"""
