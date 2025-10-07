@@ -292,6 +292,7 @@ class DataCollector:
                     truncated=truncated,
                     complementary_info={
                         "is_success": info.get('is_success', torch.zeros_like(done, device=self.args.device)).to(torch.float32),
+                        "ee_pose": info.get('ee_pose', torch.zeros((self.env.num_envs, 7), device=self.args.device)),
                     },
                 )
 
