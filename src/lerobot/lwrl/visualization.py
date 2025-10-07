@@ -18,9 +18,9 @@ Q_MAX = 1.25
 BATCH_SIZE = 512
 
 # Camera/view defaults for the 3D plot
-ELEV = 28
-AZIM = -158
-ROLL = 19
+ELEV = 46
+AZIM = 173
+ROLL = 1
 FIGSIZE = (8, 6)
 FPS = 1  # default if you don't pass another
 # =============================
@@ -48,9 +48,12 @@ def parse_arguments():
 
     _parser.add_argument("--fps", type=int, default=FPS, help="FPS for the output video")
 
+    _parser.add_argument("--color_contrast", type=str, default="red_green", choices=["red_green", "red_blue"],
+                        help="Color contrast scheme: red_green (red-orange-green) or red_blue (red-blue) for better visibility")
+
     # model configuration
     _parser.add_argument("--model_dir", type=str,
-                        default="/home/johndoe/Documents/lerobot-hilserl/outputs/train/2025-10-06/02-16-15_lwlab_lerobot_pickup_100env_nsteps3_130episodes/actor/checkpoints/",
+                        default="/home/johndoe/Documents/lerobot-hilserl/outputs/train/2025-10-07/02-07-50_lwlab_lerobot_pickup_100env_nsteps3_280episodes/checkpoints/",
                         help="Directory that contains step subfolders with .pkl checkpoints")
 
     current_time = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
@@ -160,7 +163,7 @@ def fig_to_rgb(fig):
             buf = buf[..., :3]
         return buf.copy()
 
-def plot_3d_trajectory(trajs, q_min=Q_MIN, q_max=Q_MAX, elev=ELEV, azim=AZIM, roll=ROLL, figsize=FIGSIZE, debug=False):
+def plot_3d_trajectory(trajs, color_contrast="red_green", q_min=Q_MIN, q_max=Q_MAX, elev=ELEV, azim=AZIM, roll=ROLL, figsize=FIGSIZE, debug=False):
     """
     Plot a single model's set of trajectories with heat coloring by Q.
     `trajs` is a list of trajectories; each trajectory is a list of dicts with keys:
@@ -191,7 +194,13 @@ def plot_3d_trajectory(trajs, q_min=Q_MIN, q_max=Q_MAX, elev=ELEV, azim=AZIM, ro
 
     # Normalizer for Q
     norm = colors.Normalize(vmin=q_min, vmax=q_max, clip=True)
-    cmap = matplotlib.colormaps["viridis"]
+    # cmap = matplotlib.colormaps["viridis"]
+    from matplotlib.colors import LinearSegmentedColormap
+    if color_contrast == "red_blue":
+        colors = ['red', 'purple', 'blue']  # 红-紫-蓝对比
+    else:  # red_green
+        colors = ['red', 'yellow', 'green']  # 红-黄-绿对比（简化版）
+    cmap = LinearSegmentedColormap.from_list('custom_colormap', colors, N=100)
 
     # draw each trajectory as small colored segments
     for traj in trajs:
@@ -247,7 +256,7 @@ def plot_3d_trajectory(trajs, q_min=Q_MIN, q_max=Q_MAX, elev=ELEV, azim=AZIM, ro
     plt.close(fig)
     return img
 
-def generate_video(episodes, output_dir, q_min=Q_MIN, q_max=Q_MAX, fps=FPS, debug=False):
+def generate_video(episodes, output_dir, color_contrast="red_green", q_min=Q_MIN, q_max=Q_MAX, fps=FPS, debug=False):
     """
     Build a video over *models* (episodes is list over models/checkpoints),
     where each element is a list of trajectories (each trajectory is list of {eef_pos, q_value} dicts).
@@ -261,6 +270,7 @@ def generate_video(episodes, output_dir, q_min=Q_MIN, q_max=Q_MAX, fps=FPS, debu
     for i, trajs in enumerate(tqdm.tqdm(episodes, desc="Rendering frames")):
         img = plot_3d_trajectory(
             trajs,
+            color_contrast=color_contrast,
             q_min=q_min,
             q_max=q_max,
             elev=ELEV,
@@ -310,12 +320,16 @@ def main(cfg: TrainRLServerPipelineConfig, args):
         raise FileNotFoundError(f"Model dir not found: {args.model_dir}")
 
     for steps in sorted(os.listdir(args.model_dir)):
+        if steps == "last":
+            continue
         step_dir = os.path.join(args.model_dir, steps)
         if not os.path.isdir(step_dir):
             continue
     
-        model_path = os.path.join(step_dir, "pretrained_model")
-        all_model_paths.append(model_path)
+        # model_path = os.path.join(step_dir, "pretrained_model")
+        model_path = os.path.join(step_dir, f"policy_{int(steps)}.pkl")
+        if os.path.exists(model_path):
+            all_model_paths.append(model_path)
 
     all_model_paths = sorted(all_model_paths)
     print(f"Found {len(all_model_paths)} models")
@@ -324,7 +338,8 @@ def main(cfg: TrainRLServerPipelineConfig, args):
 
     all_viz_trajs = []
     for model_path in tqdm.tqdm(all_model_paths, desc="Loading checkpoints + scoring"):
-        policy = policy.from_pretrained(model_path)
+        # policy = policy.from_pretrained(model_path)
+        policy = pkl.load(open(model_path, "rb"))
         policy = policy.eval().to(device)
         critic = policy.critic_ensemble
         viz_trajs = inference_trajectories(critic, trajs)
@@ -332,9 +347,9 @@ def main(cfg: TrainRLServerPipelineConfig, args):
 
     # optional: quick debug view for first frame to tune camera
     if args.debug and len(all_viz_trajs) > 0:
-        _ = plot_3d_trajectory(all_viz_trajs[-1], q_min=q_min, q_max=q_max, debug=True)
+        _ = plot_3d_trajectory(all_viz_trajs[-1], color_contrast=args.color_contrast, q_min=q_min, q_max=q_max, debug=True)
 
-    generate_video(all_viz_trajs, args.output_dir, q_min=q_min, q_max=q_max, fps=args.fps, debug=args.debug)
+    generate_video(all_viz_trajs, args.output_dir, color_contrast=args.color_contrast, q_min=q_min, q_max=q_max, fps=args.fps, debug=args.debug)
 
 if __name__ == "__main__":
 
