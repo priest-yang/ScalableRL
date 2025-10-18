@@ -54,7 +54,7 @@ def parse_arguments():
 
     # model configuration
     parser.add_argument("--model_path", type=str, 
-                       default="/home/johndoe/Documents/lerobot-hilserl/outputs/train/2025-10-05/00-57-03_lwlab_lerobot_pickup_100env_nsteps3/checkpoints/0110000/pretrained_model",
+                       default="/home/johndoe/Documents/lerobot-hilserl/outputs/train/2025-10-06/02-16-15_lwlab_lerobot_pickup_100env_nsteps3_130episodes/actor/checkpoints/030000/pretrained_model",
                        help="Model path")
 
     # hilserl args (for obs processing)
@@ -163,10 +163,10 @@ def main(cfg: TrainRLServerPipelineConfig):
         env_cfg=cfg.env,
     )
     print("Loading policy...")
-    policy.from_pretrained(args.model_path, local_files_only=True)
+    # policy.from_pretrained(args.model_path, local_files_only=True)
     
-    import pickle as pkl
-    policy = pkl.load(open("/home/johndoe/Documents/lerobot-hilserl/outputs/train/2025-10-05/18-56-45_lwlab_lerobot_pickup_100env_nsteps3_debug_resume/policy_24000.pkl", "rb"))
+    # import pickle as pkl
+    # policy = pkl.load(open("/home/johndoe/Documents/lerobot-hilserl/outputs/train/2025-10-05/18-56-45_lwlab_lerobot_pickup_100env_nsteps3_debug_resume/policy_24000.pkl", "rb"))
 
     policy.eval()
 

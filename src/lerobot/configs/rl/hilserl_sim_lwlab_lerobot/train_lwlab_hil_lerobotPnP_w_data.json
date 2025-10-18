@@ -1,6 +1,6 @@
 {    
     "output_dir": null,
-    "job_name": "lwlab_lerobot_pickup_100env_nsteps3_130episodes",
+    "job_name": "lwlab_lerobot_pickup_100env_nsteps3_280episodes",
     "resume": false,
     "resume_from_output_dir": "/home/johndoe/Documents/lerobot-hilserl/outputs/train/2025-10-05/00-57-03_lwlab_lerobot_pickup_100env_nsteps3/",
     "seed": 1000,
@@ -9,7 +9,7 @@
     "steps": 200000,
     "log_freq": 1,
     "save_checkpoint": true,
-    "save_freq": 5000,
+    "save_freq": 2500,
     "wandb": {
         "enable": true,
         "mode": "online",
@@ -17,7 +17,7 @@
         "disable_artifact": true
     },
     "dataset": {
-        "root": "/home/johndoe/Documents/lerobot-hilserl/datasets/lerobot_lift_visual_processed_130",
+        "root": "/home/johndoe/Documents/lerobot-hilserl/datasets/lerobot_lift_visual_processed_280",
         "repo_id": "lerobot_lift_visual_offline_data_processed",
         "use_imagenet_stats": false
     },

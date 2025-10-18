@@ -738,6 +738,11 @@ def save_training_checkpoint(
         scheduler=None,
     )
 
+    # manually pickle the whole policy
+    import pickle as pkl
+    with open(os.path.join(checkpoint_dir, f"policy_{optimization_step}.pkl"), "wb") as f:
+        pkl.dump(policy, f)
+
     # Save interaction step manually
     training_state_dir = os.path.join(checkpoint_dir, TRAINING_STATE_DIR)
     os.makedirs(training_state_dir, exist_ok=True)
