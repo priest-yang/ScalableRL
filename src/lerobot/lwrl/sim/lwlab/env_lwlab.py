@@ -116,13 +116,12 @@ def step_lwlab_env_and_process_transition(
 
     obs, reward, terminated, truncated, info = env.step(processed_action)
 
-    reward = reward + processed_action_transition[TransitionKey.REWARD]
+    # reward = reward + processed_action_transition[TransitionKey.REWARD]
     #! changed to batched or
-    terminated = torch.logical_or(terminated, processed_action_transition[TransitionKey.DONE])
-    truncated = torch.logical_or(truncated, processed_action_transition[TransitionKey.TRUNCATED])
+    terminated = terminated
+    truncated = truncated
     complementary_data = processed_action_transition[TransitionKey.COMPLEMENTARY_DATA].copy()
-    new_info = processed_action_transition[TransitionKey.INFO].copy()
-    new_info.update(info)
+    new_info = info
 
     new_transition = create_transition(
         observation=obs,

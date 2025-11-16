@@ -127,7 +127,7 @@ class RepackLwlabObservationProcessorStep(ObservationProcessorStep):
             Dictionary of observation batches with keys renamed to gym format.
         """
         # Extract policy observations
-        policy_obs = observation.get("policy", {})
+        policy_obs = observation
         processed_obs = {}
         
         # Process camera images
@@ -226,33 +226,33 @@ class LwlabSparseRewardProcessorStep(ProcessorStep):
             The processed transition with sparse reward applied.
         """
         
-        # Get the info dictionary
-        info = transition.get(TransitionKey.INFO, {})
+        # # Get the info dictionary
+        # info = transition.get(TransitionKey.INFO, {})
         
-        # Apply sparse reward: 1.0 if success, 0.0 otherwise
-        if "is_success" in info:
-            is_success = info['is_success']
-            if isinstance(is_success, torch.Tensor):
-                reward = torch.where(is_success, 1.0, 0.0)
-            else:
-                reward = 1.0 if is_success else 0.0
+        # # Apply sparse reward: 1.0 if success, 0.0 otherwise
+        # if "is_success" in info:
+        #     is_success = info['is_success']
+        #     if isinstance(is_success, torch.Tensor):
+        #         reward = torch.where(is_success, 1.0, 0.0)
+        #     else:
+        #         reward = 1.0 if is_success else 0.0
             
-            transition[TransitionKey.REWARD] = reward
-        else:
-            print("Warning: is_success is not in info")
+        #     transition[TransitionKey.REWARD] = reward
+        # else:
+        #     print("Warning: is_success is not in info")
         
-        # Handle termination/truncation logic
-        # Set truncated to True if either truncated or terminated is True
-        assert TransitionKey.DONE in transition and TransitionKey.TRUNCATED in transition, "DONE and TRUNCATED must be in transition"
-        terminated = transition[TransitionKey.DONE]
-        truncated = transition[TransitionKey.TRUNCATED]
+        # # Handle termination/truncation logic
+        # # Set truncated to True if either truncated or terminated is True
+        # assert TransitionKey.DONE in transition and TransitionKey.TRUNCATED in transition, "DONE and TRUNCATED must be in transition"
+        # terminated = transition[TransitionKey.DONE]
+        # truncated = transition[TransitionKey.TRUNCATED]
 
-        if isinstance(terminated, torch.Tensor) and isinstance(truncated, torch.Tensor):
-            new_done = torch.logical_or(truncated, terminated)
-        else:
-            new_done = truncated or terminated
+        # if isinstance(terminated, torch.Tensor) and isinstance(truncated, torch.Tensor):
+        #     new_done = torch.logical_or(truncated, terminated)
+        # else:
+        #     new_done = truncated or terminated
             
-        transition[TransitionKey.DONE] = new_done
+        # transition[TransitionKey.DONE] = new_done
         
         return transition
 

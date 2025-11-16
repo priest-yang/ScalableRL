@@ -482,7 +482,7 @@ class SACFlowRLPolicy(
             L_bc = torch.zeros_like(L_rl)
 
         # ----- If gradient projection is disabled, return the plain sum -----
-        if not bool(getattr(self.config, "flowrl_gradproj_enabled", False)):
+        if not bool(getattr(self.config, "flowrl_gradproj_enabled", False)) or not self.flow_rl_enabled:
             return L_rl + lambda_bc * L_bc
 
         # ----- Gradient projection (actor only) -----

@@ -1,0 +1,231 @@
+{    
+    "output_dir": null,
+    "job_name": "whole_body_tracking_flowrl_dance1_subject1_15s_1024env",
+    "resume": false,
+    "resume_from_output_dir": "/home/johndoe/Documents/lerobot-hilserl/outputs/train/2025-10-05/00-57-03_lwlab_lerobot_pickup_100env_nsteps3/",
+    "seed": 1000,
+    "num_workers": 4,
+    "batch_size": 256,
+    "steps": 500000,
+    "log_freq": 1,
+    "save_checkpoint": true,
+    "save_freq": 20000,
+    "wandb": {
+        "enable": true,
+        "mode": "online",
+        "project": "sac_whole_body_tracking",
+        "disable_artifact": true
+    },
+    "dataset": {
+        "root": "/home/johndoe/Documents/lerobot-hilserl/data/G1_locomotion_dance1_subject1_15s",
+        "repo_id": "G1_locomotion_dance1_subject1_15s_offline_data_processed",
+        "use_imagenet_stats": false
+    },
+    "policy": {
+        "type": "sac_flowrl",
+        "n_obs_steps": 1,
+        "repo_id": "hf_username/policy_name",
+        "normalization_mapping": {
+            "VISUAL": "MEAN_STD",
+            "STATE": "MIN_MAX",
+            "ENV": "MIN_MAX",
+            "ACTION": "MIN_MAX"
+        },
+        "flow_rl_enabled": false,
+        "flowrl_expectile_tau": 0.9,
+        "flow_rl_bc_weight": 1.0,
+        "flow_rl_qv_weight": 1.0,
+        "flowrl_gradproj_enabled": false,
+        "flowrl_gradproj_mode": "bc_on_rl_orth",
+        "flowrl_gradproj_conflict_cos_thresh": 0.0,
+        "flowrl_gradproj_eps": 1e-12,
+        "input_features": {
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    160
+                ]
+            }, 
+            "observation.environment_state": {
+                "type": "STATE",
+                "shape": [
+                    286
+                ]
+            }
+        },
+        "output_features": {
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    29
+                ]
+            }
+        },
+        "device": "cuda",
+        "use_amp": false,
+        "dataset_stats": null, 
+        "storage_device": "cpu",
+        "vision_encoder_name": null,
+        "freeze_vision_encoder": false,
+        "image_encoder_hidden_dim": 32,
+        "shared_encoder": false,
+        "online_steps": 1000000,
+        "online_buffer_capacity": 500000,
+        "offline_buffer_capacity": 100000,
+        "online_step_before_learning": 100,
+        "policy_update_freq": 1,
+        "discount": 0.97,
+        "n_steps": 3,
+        "temperature_init": 0.01,
+        "num_critics": 2,
+        "num_subsample_critics": null,
+        "critic_lr": 0.0001,
+        "actor_lr": 0.00001,
+        "temperature_lr": 0.0003,
+        "critic_target_update_weight": 0.005,
+        "utd_ratio": 2,
+        "state_encoder_hidden_dim": 256,
+        "latent_dim": 64,
+        "target_entropy": null,
+        "use_backup_entropy": true,
+        "grad_clip_norm": 1.0,
+        "num_discrete_actions": null,
+        "critic_network_kwargs": {
+            "hidden_dims": [
+                512, 256, 128
+            ],
+            "activate_final": true,
+            "final_activation": null
+        },
+        "actor_network_kwargs": {
+            "hidden_dims": [
+                512, 256, 128
+            ],
+            "activate_final": true
+        },
+        "policy_kwargs": {
+            "use_tanh_squash": true,
+            "std_min": 1e-5,
+            "std_max": 2,
+            "init_final": 0.05,
+            "action_low_bound": [
+                -2.0007896423339844,
+                -1.3219497203826904,
+                -0.5762538909912109,
+                -1.3074395656585693,
+                -2.683807134628296,
+                -2.080003023147583,
+                -1.1860573291778564,
+                -2.070688486099243,
+                -1.2049287557601929,
+                -2.545844793319702,
+                -2.6515867710113525,
+                -4.3593950271606445,
+                -1.5729193687438965,
+                -1.8439465761184692,
+                -2.0755741596221924,
+                -0.8986247777938843,
+                -3.584867000579834,
+                -1.070242166519165,
+                -1.068966031074524,
+                -2.68204927444458,
+                -3.0893101692199707,
+                -2.511408567428589,
+                -1.845584511756897,
+                -0.13486817479133606,
+                -2.848116159439087,
+                -0.3449133336544037,
+                0.637143611907959,
+                -6.08848762512207,
+                -6.5467634201049805
+            ],
+            "action_high_bound": [
+                1.6378426551818848,
+                1.967543363571167,
+                0.7609346508979797,
+                3.063371181488037,
+                0.7889152765274048,
+                1.9109703302383423,
+                1.7230250835418701,
+                1.595490574836731,
+                1.1514240503311157,
+                3.4562106132507324,
+                2.4047093391418457,
+                1.091559886932373,
+                2.5173401832580566,
+                6.494006633758545,
+                7.20145320892334,
+                3.7248313426971436,
+                0.9305103421211243,
+                1.0210849046707153,
+                2.1182305812835693,
+                2.081247568130493,
+                0.8598413467407227,
+                0.9991599321365356,
+                0.6877201199531555,
+                4.060330390930176,
+                0.1663036346435547,
+                6.827876091003418,
+                7.793975830078125,
+                3.3119618892669678,
+                2.9009127616882324
+            ]
+        },
+        "actor_learner_config": {
+            "learner_host": "127.0.0.1",
+            "learner_port": 50051,
+            "policy_parameters_push_frequency": 10
+        },
+        "concurrency": {
+            "actor": "threads",
+            "learner": "threads"
+        }
+    },
+    "env": {
+        "type": "lwlab",
+        "name": "lwlab_sim",
+        "task": "G1_whole_body_tracking",
+        "num_envs": 1024,
+        "fps": 10,
+        "robot": null,
+        "teleop": null,
+        "processor": {
+            "ENV_STATE_KEYS": ["critic"],
+            "OBS_STATE_KEYS": ["policy"],
+            "CAMERA_KEYS": [],
+
+            "control_mode": "gamepad",
+            "reset": {
+                "fixed_reset_joint_positions": null,
+                "reset_time_s": 2.0,
+                "control_time_s": 15.0,
+                "terminate_on_success": true
+            }
+        },
+        "features": {
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    160
+                ]
+            },
+            "observation.environment_state": {
+                "type": "STATE",
+                "shape": [
+                    286
+                ]
+            },
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    29
+                ]
+            }
+        },
+        "features_map": {
+            "observation.state": "observation.state",
+            "observation.environment_state": "observation.environment_state",
+            "action": "action"
+        }
+    }
+}

@@ -22,7 +22,7 @@ from tqdm import tqdm
 # 导入必要的模块
 from lwlab.distributed.proxy import RemoteEnv
 from lwlab.utils.config_loader import config_loader
-from policy.maniskill_ppo.agent import PPOArgs, PPO
+# from policy.maniskill_ppo.agent import PPOArgs, PPO
 from policy.maniskill_ppo.agent import observation as process_maniskill_ppo_observation
 from lerobot.lwrl.buffer_batched import ParallelReplayBuffer, BatchTransition
 from lerobot.utils.transition import move_transition_to_device
@@ -37,7 +37,35 @@ from lerobot.rl.gym_manipulator import (
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.processor import TransitionKey
 from lerobot.configs import parser
+import numpy as np
+import onnxruntime as ort
 
+def onnx_inference(ort_session, obs, timestep):
+    with torch.inference_mode():
+        # Prepare inputs for ONNX model
+        # Convert torch tensor to numpy array
+        obs = obs["policy"]
+        obs_np = obs.cpu().numpy() if isinstance(obs, torch.Tensor) else obs
+        time_step_np = np.array([[timestep]], dtype=np.float32)
+        
+        # Run inference
+        # The model expects inputs: ["obs", "time_step"]
+        # and returns: ["actions", "joint_pos", "joint_vel", "body_pos_w", "body_quat_w", "body_lin_vel_w", "body_ang_vel_w"]
+        outputs = ort_session.run(
+            None,  # None means return all outputs
+            {
+                "obs": obs_np.astype(np.float32),
+                "time_step": time_step_np
+            }
+        )
+        
+        # Extract actions (first output)
+        actions_np = outputs[0]
+        # Convert back to torch tensor if needed
+        actions = torch.from_numpy(actions_np).to(obs.device) if isinstance(obs, torch.Tensor) else actions_np
+        
+        return actions
+    
 def process_maniskill_ppo_observation_override(obs):
     """
     Override process maniskill ppo observation
@@ -109,8 +137,8 @@ class CollectionArgs:
     fps: int = 20
     root_dir: str = "./datasets"
     
-    # PPO configuration
-    ppo: PPOArgs = field(default_factory=PPOArgs)
+    # # PPO configuration
+    # ppo: PPOArgs = field(default_factory=PPOArgs)
 
 
 class DataCollector:
@@ -139,18 +167,26 @@ class DataCollector:
         obs, _ = self.env.reset()
         obs = obs
         
-        self.agent = PPO(
-            self.env, 
-            process_maniskill_ppo_observation_override(copy.deepcopy(
-                obs['policy'] if 'policy' in obs else obs)), 
-            self.args.ppo, 
-            self.args.device, 
-            train=False
-        )
+        # self.agent = PPO(
+        #     self.env, 
+        #     process_maniskill_ppo_observation_override(copy.deepcopy(
+        #         obs['policy'] if 'policy' in obs else obs)), 
+        #     self.args.ppo, 
+        #     self.args.device, 
+        #     train=False
+        # )
         
+        self.args.checkpoint = "/home/johndoe/Documents/whole_body_tracking/logs/rsl_rl/temp/exported/policy.onnx"
         assert self.args.checkpoint is not None, "Checkpoint is required"
         print(f"Loading checkpoint: {self.args.checkpoint}")
-        self.agent.load_model(self.args.checkpoint)            
+        # self.agent.load_model(self.args.checkpoint) 
+        print(f"[INFO]: Loading ONNX model from: {self.args.checkpoint}")
+        
+        # Create ONNX Runtime inference session
+        # Use 'CUDAExecutionProvider' for GPU or 'CPUExecutionProvider' for CPU
+        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+        self.agent = ort.InferenceSession(self.args.checkpoint, providers=providers)
+                    
         print("Agent setup complete")
         
     def setup_buffer(self):
@@ -195,11 +231,7 @@ class DataCollector:
         with torch.inference_mode():
             while step_count < self.args.num_steps:
                 # Get actions
-                actions = self.agent.agent.get_action(
-                    process_maniskill_ppo_observation_override(copy.deepcopy(
-                        raw_obs['policy'] if 'policy' in raw_obs else raw_obs)), 
-                    deterministic=self.args.deterministic
-                )
+                actions = onnx_inference(self.agent, raw_obs, step_count)
 
                 # process
                 observation = {
@@ -224,11 +256,13 @@ class DataCollector:
                 next_raw_obs, reward, terminated, truncated, info = self.env.step(actions)
                 # import ipdb; ipdb.set_trace()
 
+                info['is_success'] = torch.logical_or(terminated, truncated)
+
                 # Statistics
                 success_count += info['is_success'].sum().item()
                 episode_count += (terminated | truncated).sum().item()
 
-                reward = reward + processed_action_transition[TransitionKey.REWARD]
+                # reward = reward + processed_action_transition[TransitionKey.REWARD]
                 #! changed to batched or
                 terminated = torch.logical_or(terminated, processed_action_transition[TransitionKey.DONE])
                 truncated = torch.logical_or(truncated, processed_action_transition[TransitionKey.TRUNCATED])
@@ -273,7 +307,8 @@ class DataCollector:
                     # action_processor.reset()
                     
                     # recreate real transition and overwrite next observation (pass processer)
-                    next_observation_raw = info['final_obs'] # replace with last obs before reset
+                    next_observation_raw = info['final_obs'] if 'final_obs' in info else next_raw_obs
+                    # replace with last obs before reset
                     new_transition_raw = create_transition(
                         observation=next_observation_raw, info=info,
                         done=torch.zeros_like(done, device=self.args.device, dtype=torch.bool),
@@ -289,7 +324,8 @@ class DataCollector:
                     # make sure those will not be used!! (only create to use processer)
                     del new_transition, new_transition_raw
 
-                    info.pop('final_obs') # remove final_obs from info to save space
+                    if 'final_obs' in info:
+                        info.pop('final_obs') # remove final_obs from info to save space
                 
                 # Create transition data
                 parallel_transition = BatchTransition(
@@ -438,7 +474,7 @@ def parse_arguments():
                        help="Task configuration file")
     
     # Data collection configuration
-    parser.add_argument("--num_steps", type=int, default=100,
+    parser.add_argument("--num_steps", type=int, default=3000,
                        help="Number of steps to collect")
  
     # Model configuration
@@ -513,6 +549,6 @@ if __name__ == "__main__":
 """
 hilserl
 python /home/johndoe/Documents/lerobot-hilserl/src/lerobot/lwrl/sim/lwlab/collect_lerobot_dataset_with_processed_obs.py \
-    --config_path="/home/johndoe/Documents/lerobot-hilserl/src/lerobot/configs/rl/hilserl_sim_lwlab_lerobot/train_lwlab_hil_lerobotPnP.json"
+    --config_path="/home/johndoe/Documents/lerobot-hilserl/src/lerobot/configs/rl/hilserl_sim_lwlab_lerobot/train_locomotion_flowrl_w_data.json"
 
 """

@@ -386,25 +386,26 @@ def act_with_policy(
             # action_processor.reset()
             
             # recreate real transition and overwrite next observation (pass processer)
-            next_observation_raw = info['final_obs']['policy'] # replace with last obs before reset
-            new_transition_raw = create_transition(
-                observation=next_observation_raw, info=info,
-                done=torch.zeros_like(done, device=device, dtype=torch.bool),
-                truncated=torch.zeros_like(truncated, device=device, dtype=torch.bool),
-                reward=torch.zeros_like(reward, device=device, dtype=torch.float32),
-            )
-            # Extract values from processed transition
-            new_transition = env_processor(new_transition_raw)
-            next_observation = {
-                k: v
-                for k, v in new_transition[TransitionKey.OBSERVATION].items()
-                if k in cfg.policy.input_features
-            }
-            # make sure those will not be used!! (only create to use processer)
-            del new_transition, new_transition_raw
+            # next_observation_raw = info['final_obs']# replace with last obs before reset
+            # new_transition_raw = create_transition(
+            #     observation=next_observation_raw, info=info,
+            #     done=torch.zeros_like(done, device=device, dtype=torch.bool),
+            #     truncated=torch.zeros_like(truncated, device=device, dtype=torch.bool),
+            #     reward=torch.zeros_like(reward, device=device, dtype=torch.float32),
+            # )
+            # # Extract values from processed transition
+            # new_transition = env_processor(new_transition_raw)
+            # next_observation = {
+            #     k: v
+            #     for k, v in new_transition[TransitionKey.OBSERVATION].items()
+            #     if k in cfg.policy.input_features
+            # }
+            # # make sure those will not be used!! (only create to use processer)
+            # del new_transition, new_transition_raw
 
-            info.pop('final_obs') # remove final_obs from info to save space
-            
+            if 'final_obs' in info:
+                info.pop('final_obs') # remove final_obs from info to save space
+
         list_transition_to_send_to_learner.append(
             Transition(
                 state=observation,
@@ -424,6 +425,11 @@ def act_with_policy(
         else:
             transition = new_transition
 
+        
+        for k, v in info['log'].items():
+            if isinstance(v, torch.Tensor):
+                info['log'][k] = v.item()
+
         if time.time() - last_time_policy_received > policy_parameters_push_frequency:
             logging.info(f"[ACTOR] Global step {interaction_step}: Running average reward: {sum(reward_running_buffer) / len(reward_running_buffer)}")
             update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
@@ -440,6 +446,7 @@ def act_with_policy(
                         "Running average reward": float(sum(reward_running_buffer) / (len(reward_running_buffer) + 1e-10)),
                         "Success rate": float(sum(success_running_buffer) / (len(success_running_buffer) + 1e-10)),
                         **stats,
+                        **info['log'], 
                     }
                 )
             )
