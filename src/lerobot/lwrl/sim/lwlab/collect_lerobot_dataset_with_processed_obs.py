@@ -474,7 +474,7 @@ def parse_arguments():
                        help="Task configuration file")
     
     # Data collection configuration
-    parser.add_argument("--num_steps", type=int, default=3000,
+    parser.add_argument("--num_steps", type=int, default=30000,
                        help="Number of steps to collect")
  
     # Model configuration

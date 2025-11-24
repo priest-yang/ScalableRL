@@ -1,6 +1,6 @@
 {    
     "output_dir": null,
-    "job_name": "whole_body_tracking_flowrl_dance1_subject1_15s_1024env",
+    "job_name": "whole_body_tracking_flowrl_dance1_subject1_15s_1024env_30000",
     "resume": false,
     "resume_from_output_dir": "/home/johndoe/Documents/lerobot-hilserl/outputs/train/2025-10-05/00-57-03_lwlab_lerobot_pickup_100env_nsteps3/",
     "seed": 1000,
@@ -17,7 +17,7 @@
         "disable_artifact": true
     },
     "dataset": {
-        "root": "/home/johndoe/Documents/lerobot-hilserl/data/G1_locomotion_dance1_subject1_15s",
+        "root": "/home/johndoe/Documents/lerobot-hilserl/data/G1_locomotion_dance1_subject1_15s_30000",
         "repo_id": "G1_locomotion_dance1_subject1_15s_offline_data_processed",
         "use_imagenet_stats": false
     },
