@@ -411,7 +411,7 @@ def add_actor_information_and_train(
         # Create Adam optimizer for encoder parameters
         encoder_optimizer = torch.optim.Adam(
             policy.actor.encoder.parameters(),
-            lr=actor_lr,
+            lr=actor_lr * 0.1,
             betas=actor_betas,
             eps=actor_eps,
             weight_decay=actor_weight_decay,
@@ -493,6 +493,12 @@ def add_actor_information_and_train(
                     mode="train",
                     custom_step_key="BC step",
                 )
+
+            if bc_step % 1000 == 0:
+                logging.info("[OFFLINE] Pushing actor policy to the queue after BC warmup")
+                push_actor_policy_to_queue(parameters_queue=parameters_queue, policy=policy)
+
+
         
         # # Reset ALL encoder parameters to their original requires_grad state
         # # When shared_encoder=True, this also resets the critic encoder since they're the same object

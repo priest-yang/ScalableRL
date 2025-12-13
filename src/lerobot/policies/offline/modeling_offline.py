@@ -138,10 +138,19 @@ class OfflineIQLPolicy(PreTrainedPolicy):
             }
 
         if model == "actor":
+            rewards: Tensor = batch["reward"]
+            next_observations: dict[str, Tensor] = batch["next_state"]
+            next_observation_features: Tensor | None = batch.get("next_observation_feature")
+            done: Tensor = batch["done"]
+
             actor_loss, actor_info = self.compute_loss_actor(
                 observations=observations,
                 actions=actions,
                 observation_features=observation_features,
+                next_observations=next_observations,
+                next_observation_features=next_observation_features,
+                rewards=rewards,
+                done=done,
             )
             return {"loss_actor": actor_loss, "actor_info": actor_info}
 
@@ -370,6 +379,7 @@ class OfflineIQLPolicy(PreTrainedPolicy):
         observations: dict[str, Tensor],
         actions: Tensor,
         observation_features: Tensor | None = None,
+        **kwargs,
     ) -> tuple[Tensor, dict]:
         # NOTE: For discrete actions, we only use the continuous action part
         if self.config.num_discrete_actions is not None:
