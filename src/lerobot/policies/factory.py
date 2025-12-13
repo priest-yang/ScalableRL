@@ -30,7 +30,10 @@ from lerobot.envs.configs import EnvConfig
 from lerobot.envs.utils import env_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
-from lerobot.policies.offline.configuration_offline import OfflineIQLConfig
+from lerobot.policies.offline.configuration_offline import (
+    OfflineIQLConfig, 
+    OfflineIQLDiTFlowAdvConfig
+)
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -94,6 +97,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.offline.modeling_offline import OfflineIQLPolicy
 
         return OfflineIQLPolicy
+    elif name == "offline_dit_flow_adv":
+        from lerobot.policies.offline.modeling_offline_dit_flow import OfflineIQLDiTFlowAdvPolicy
+
+        return OfflineIQLDiTFlowAdvPolicy
     elif name == "sac":
         from lerobot.policies.sac.modeling_sac import SACPolicy
 
@@ -147,6 +154,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return PI05Config(**kwargs)
     elif policy_type == "offline":
         return OfflineIQLConfig(**kwargs)
+    elif policy_type == "offline_dit_flow_adv":
+        return OfflineIQLDiTFlowAdvConfig(**kwargs)
     elif policy_type == "sac":
         return SACConfig(**kwargs)
     elif policy_type == "sac_flowrl":

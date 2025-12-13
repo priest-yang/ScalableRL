@@ -70,3 +70,26 @@ class OfflineIQLConfig(SACConfig):
             weight_decay=0.0,
             optimizer_groups=optimizer_groups,
         )
+
+@PreTrainedConfig.register_subclass("offline_dit_flow_adv")
+@dataclass
+class OfflineIQLDiTFlowAdvConfig(OfflineIQLConfig):
+    image_tokens_per_camera: int = 3
+
+    # --- Advantage conditioning ---
+    adv_threshold: float = 1e-8
+    adv_cond_alpha: float = 1.0          # α in the combined loss
+    advantage_type: str = "td"           # "td" or "qv"
+
+    # --- DiT backbone ---
+    dit_model_dim: int = 256
+    dit_num_layers: int = 8
+    dit_num_heads: int = 8
+    dit_mlp_ratio: float = 4.0
+    dit_dropout: float = 0.1
+
+    # --- Flow sampling ---
+    cfg_scale: float = 1.0               # classifier-free guidance scale
+    flow_num_inference_steps: int = 10
+    flow_sampler: str = "euler"          # "euler" or "heun"
+    flow_eps_action: float = 1e-6

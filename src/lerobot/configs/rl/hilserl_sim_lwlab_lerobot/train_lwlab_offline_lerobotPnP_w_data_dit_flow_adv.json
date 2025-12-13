@@ -1,6 +1,6 @@
 {    
     "output_dir": null,
-    "job_name": "lwlab_lerobot_pickup_280episodes_offline_dit_flow_adv",
+    "job_name": "lwlab_lerobot_pickup_280episodes_offline_dit_crossattn_flow_adv_shared_enc",
     "resume": false,
     "resume_from_output_dir": "/home/johndoe/Documents/lerobot-hilserl/outputs/train/2025-11-09/10-24-39_lwlab_lerobot_pickup_280episodes_offline_warmup",
     "seed": 1000,
@@ -48,6 +48,7 @@
         "adv_threshold": 1e-8,
         "adv_cond_alpha": 1.0,
         "advantage_type": "td",
+        "image_tokens_per_camera":5,
         "dit_model_dim": 256,
         "dit_num_layers": 8,
         "dit_num_heads": 8,
